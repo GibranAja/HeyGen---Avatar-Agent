@@ -19,7 +19,7 @@ export const useAvatarStore = defineStore('avatar', {
       this.logs.push(`[${timestamp}] ${message}`)
     },
 
-    async createSession(avatarId, voiceId) {
+    async createSession(avatarId, voiceId, knowledgeBaseId = null) {
       try {
         // Basic session configuration
         const sessionConfig = {
@@ -48,6 +48,14 @@ export const useAvatarStore = defineStore('avatar', {
           this.addLog(`Using Voice ID: ${voiceId.trim()}`)
         } else {
           this.addLog('No Voice ID provided - using default voice')
+        }
+
+        // Add knowledge base if provided
+        if (knowledgeBaseId && knowledgeBaseId.trim()) {
+          sessionConfig.knowledge_base_id = knowledgeBaseId.trim()
+          this.addLog(`Using Knowledge Base ID: ${knowledgeBaseId.trim()}`)
+        } else {
+          this.addLog('No Knowledge Base ID provided')
         }
 
         this.addLog(`Creating session with config: ${JSON.stringify(sessionConfig, null, 2)}`)
@@ -100,7 +108,7 @@ export const useAvatarStore = defineStore('avatar', {
       }
     },
 
-    async startSession(avatarId, voiceId) {
+    async startSession(avatarId, voiceId, knowledgeBaseId = null) {
       try {
         this.isLoading = true
         this.addLog('=== Starting New Avatar Session ===')
@@ -118,9 +126,15 @@ export const useAvatarStore = defineStore('avatar', {
           this.addLog('Voice ID: Not provided (will use default)')
         }
 
+        if (knowledgeBaseId && knowledgeBaseId.trim()) {
+          this.addLog(`Knowledge Base ID: ${knowledgeBaseId.trim()}`)
+        } else {
+          this.addLog('Knowledge Base ID: Not provided')
+        }
+
         // Step 1: Create session
         this.addLog('Step 1: Creating session...')
-        const sessionData = await this.createSession(avatarId, voiceId)
+        const sessionData = await this.createSession(avatarId, voiceId, knowledgeBaseId)
 
         // Step 2: Start session
         this.addLog('Step 2: Starting session...')

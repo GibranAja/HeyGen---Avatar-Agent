@@ -1,5 +1,30 @@
 <template>
   <div class="avatar-container">
+    <!-- Knowledge Base Section -->
+    <div class="knowledge-base-section">
+      <h3>Knowledge Base Management</h3>
+      <div class="kb-controls">
+        <button @click="createInsuranceKB" :disabled="kbStore.isLoading" class="btn btn-create-kb">
+          {{ kbStore.isLoading ? 'Creating...' : 'Create Insurance KB' }}
+        </button>
+        <button @click="listKnowledgeBases" class="btn btn-list-kb">List KBs</button>
+        <button
+          @click="updateKBWithCurrentTime"
+          :disabled="!selectedKnowledgeBaseId || kbStore.isLoading"
+          class="btn btn-update-kb"
+        >
+          Update Time
+        </button>
+        <select v-model="selectedKnowledgeBaseId" class="kb-select">
+          <option value="">Select Knowledge Base (Optional)</option>
+          <option v-for="kb in knowledgeBases" :key="kb.id" :value="kb.id">
+            {{ kb.name }}
+          </option>
+        </select>
+        <div class="time-display">Current: {{ currentTimeGreeting }}</div>
+      </div>
+    </div>
+
     <!-- Controls -->
     <div class="controls-section">
       <div class="input-row">
@@ -46,14 +71,38 @@
       </div>
     </div>
 
+    <!-- Video Controls -->
+    <div class="video-controls">
+      <label class="video-fit-label">
+        Video Fit:
+        <select v-model="videoFitMode" @change="updateVideoFit" class="video-fit-select">
+          <option value="contain">Contain (Show Full Video)</option>
+          <option value="cover">Cover (Fill Container)</option>
+          <option value="fill">Fill (Stretch to Fit)</option>
+          <option value="scale-down">Scale Down</option>
+        </select>
+      </label>
+      <label class="video-size-label">
+        Size:
+        <select v-model="videoSize" @change="updateVideoSize" class="video-size-select">
+          <option value="small">Small (480px)</option>
+          <option value="medium">Medium (640px)</option>
+          <option value="large">Large (800px)</option>
+          <option value="xlarge">Extra Large (1024px)</option>
+        </select>
+      </label>
+      <button @click="resetVideoSettings" class="btn btn-reset-video">Reset</button>
+    </div>
+
     <!-- Video Container -->
-    <div class="video-container">
+    <div class="video-container" :class="videoSizeClass">
       <video
         id="avatarVideo"
         ref="videoRef"
         autoplay
         playsinline
         class="avatar-video"
+        :class="videoFitClass"
         controls
         :muted="false"
       ></video>
@@ -73,22 +122,37 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useAvatarStore } from '../stores/avatar-fixed'
+import { useKnowledgeBaseStore } from '../stores/knowledge-base'
 
 const avatarStore = useAvatarStore()
+const kbStore = useKnowledgeBaseStore()
 const videoRef = ref(null)
 
-// Reactive refs - removed default values
+// Reactive refs
 const avatarId = ref('')
 const voiceId = ref('')
 const textToSpeak = ref('')
+const selectedKnowledgeBaseId = ref('')
+const videoFitMode = ref('contain')
+const videoSize = ref('medium')
 
 // Computed properties
 const isConnected = computed(() => avatarStore.isConnected)
 const isLoading = computed(() => avatarStore.isLoading)
 const streamReady = computed(() => avatarStore.streamReady)
-const logs = computed(() => avatarStore.logs)
+const logs = computed(() => [...avatarStore.logs, ...kbStore.logs])
+const knowledgeBases = computed(() => kbStore.knowledgeBases)
+const currentTimeGreeting = computed(() => kbStore.getTimeGreeting())
+
+const videoFitClass = computed(() => `video-fit-${videoFitMode.value}`)
+const videoSizeClass = computed(() => `video-size-${videoSize.value}`)
+
+// Watch for video fit mode changes
+watch(videoFitMode, (newMode) => {
+  updateVideoFit()
+})
 
 // Ensure video is unmuted when component mounts
 onMounted(() => {
@@ -96,20 +160,63 @@ onMounted(() => {
     videoRef.value.muted = false
     videoRef.value.volume = 1.0
   }
+  // Auto-load knowledge bases
+  listKnowledgeBases()
 })
 
 // Methods
+async function createInsuranceKB() {
+  try {
+    await kbStore.createInsuranceKnowledgeBase()
+    await listKnowledgeBases()
+  } catch (error) {
+    console.error('Failed to create knowledge base:', error)
+  }
+}
+
+async function listKnowledgeBases() {
+  try {
+    await kbStore.listKnowledgeBases()
+  } catch (error) {
+    console.error('Failed to list knowledge bases:', error)
+  }
+}
+
 async function handleStart() {
   try {
-    await avatarStore.startSession(avatarId.value, voiceId.value)
+    // Update KB dengan waktu terkini sebelum start
+    if (selectedKnowledgeBaseId.value) {
+      await updateKBWithCurrentTime()
+      // Tunggu sebentar untuk memastikan update selesai
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    }
 
-    // Ensure video element is unmuted after connection
+    await avatarStore.startSession(avatarId.value, voiceId.value, selectedKnowledgeBaseId.value)
+
+    // Ensure video element is unmuted and properly configured after connection
     setTimeout(() => {
       if (videoRef.value) {
         videoRef.value.muted = false
         videoRef.value.volume = 1.0
+        // Apply current video fit setting
+        updateVideoFit()
       }
     }, 1000)
+
+    // Tunggu sampai avatar siap, lalu otomatis mulai greeting
+    setTimeout(async () => {
+      if (avatarStore.streamReady && avatarStore.isConnected) {
+        const currentGreeting = kbStore.getTimeGreeting()
+        const greetingScript = kbStore.generateOpeningScript()
+        
+        console.log('Auto greeting with:', currentGreeting)
+        console.log('Greeting script:', greetingScript)
+        
+        // Gunakan greeting script yang sudah sesuai waktu
+        await avatarStore.speak(greetingScript, 'talk')
+      }
+    }, 2000) // Tunggu 2 detik setelah koneksi berhasil
+    
   } catch (error) {
     console.error('Failed to start session:', error)
   }
@@ -133,18 +240,91 @@ async function handleSpeak(type) {
     console.error('Failed to speak:', error)
   }
 }
+
+async function updateKBWithCurrentTime() {
+  if (!selectedKnowledgeBaseId.value) return
+
+  try {
+    await kbStore.updateKnowledgeBaseWithCurrentTime(selectedKnowledgeBaseId.value)
+  } catch (error) {
+    console.error('Failed to update knowledge base with current time:', error)
+  }
+}
+
+function updateVideoFit() {
+  // Force re-render video element with new fit mode
+  if (videoRef.value) {
+    videoRef.value.style.objectFit = videoFitMode.value
+    console.log('Video fit updated to:', videoFitMode.value)
+  }
+}
+
+function updateVideoSize() {
+  // The size is handled by CSS classes
+  console.log('Video size updated to:', videoSize.value)
+}
+
+function resetVideoSettings() {
+  videoFitMode.value = 'contain'
+  videoSize.value = 'medium'
+  updateVideoFit()
+}
 </script>
 
 <style scoped>
 .avatar-container {
-  max-width: 900px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: 20px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
-.controls-section {
+.knowledge-base-section {
   margin-bottom: 20px;
+  padding: 15px;
+  border: 2px solid #e9ecef;
+  border-radius: 8px;
+  background-color: #f8f9fa;
+}
+
+.knowledge-base-section h3 {
+  margin: 0 0 15px 0;
+  color: #495057;
+  font-size: 16px;
+}
+
+.kb-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.btn-create-kb {
+  background-color: #17a2b8;
+  color: white;
+}
+
+.btn-create-kb:hover:not(:disabled) {
+  background-color: #138496;
+}
+
+.btn-list-kb {
+  background-color: #6c757d;
+  color: white;
+}
+
+.btn-list-kb:hover:not(:disabled) {
+  background-color: #5a6268;
+}
+
+.btn-update-kb {
+  background-color: #ffc107;
+  color: #212529;
+}
+
+.btn-update-kb:hover:not(:disabled) {
+  background-color: #e0a800;
 }
 
 .input-row {
@@ -241,20 +421,110 @@ async function handleSpeak(type) {
   background-color: #0056b3;
 }
 
+.btn-reset-video {
+  background-color: #6c757d;
+  color: white;
+  font-size: 12px;
+  padding: 8px 16px;
+}
+
+.btn-reset-video:hover:not(:disabled) {
+  background-color: #5a6268;
+}
+
+.video-controls {
+  display: flex;
+  gap: 15px;
+  margin-bottom: 15px;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  padding: 12px;
+  background-color: #f8f9fa;
+  border-radius: 8px;
+  border: 1px solid #dee2e6;
+}
+
+.video-fit-label,
+.video-size-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #495057;
+}
+
+.video-fit-select,
+.video-size-select {
+  padding: 8px 12px;
+  border: 2px solid #ddd;
+  border-radius: 6px;
+  font-size: 13px;
+  background-color: white;
+  cursor: pointer;
+  min-width: 160px;
+}
+
+.video-fit-select:focus,
+.video-size-select:focus {
+  outline: none;
+  border-color: #007bff;
+}
+
 .video-container {
   position: relative;
   width: 100%;
-  height: 400px;
+  max-width: 640px;
+  height: 0;
+  padding-bottom: 56.25%; /* 16:9 aspect ratio */
   background-color: #000;
   border-radius: 12px;
   overflow: hidden;
-  margin-bottom: 20px;
+  margin: 0 auto 20px auto;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  border: 2px solid #333;
+}
+
+.video-container.video-size-small {
+  max-width: 480px;
+}
+
+.video-container.video-size-medium {
+  max-width: 640px;
+}
+
+.video-container.video-size-large {
+  max-width: 800px;
+}
+
+.video-container.video-size-xlarge {
+  max-width: 1024px;
 }
 
 .avatar-video {
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 100%;
   height: 100%;
+  background-color: #000;
+}
+
+.avatar-video.video-fit-contain {
+  object-fit: contain;
+}
+
+.avatar-video.video-fit-cover {
   object-fit: cover;
+}
+
+.avatar-video.video-fit-fill {
+  object-fit: fill;
+}
+
+.avatar-video.video-fit-scale-down {
+  object-fit: scale-down;
 }
 
 .video-placeholder {
@@ -307,5 +577,54 @@ async function handleSpeak(type) {
 .logs-container::-webkit-scrollbar-thumb {
   background: #666;
   border-radius: 3px;
+}
+
+.kb-select {
+  flex: 1;
+  min-width: 200px;
+  padding: 12px;
+  border: 2px solid #ddd;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.kb-select:focus {
+  outline: none;
+  border-color: #007bff;
+}
+
+.time-display {
+  background-color: #e9ecef;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #495057;
+  font-weight: 500;
+}
+
+.controls-section {
+  margin-bottom: 20px;
+  padding: 15px;
+  border: 2px solid #e9ecef;
+  border-radius: 8px;
+  background-color: #fff;
+}
+
+@media (max-width: 768px) {
+  .video-controls {
+    flex-direction: column;
+    gap: 10px;
+  }
+  
+  .video-fit-label,
+  .video-size-label {
+    width: 100%;
+    justify-content: space-between;
+  }
+  
+  .video-fit-select,
+  .video-size-select {
+    min-width: 180px;
+  }
 }
 </style>
