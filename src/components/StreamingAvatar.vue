@@ -10,17 +10,16 @@
         <button @click="listKnowledgeBases" class="btn btn-list-kb">List KBs</button>
         <button
           @click="updateKBWithCurrentTime"
-          :disabled="!selectedKnowledgeBaseId || kbStore.isLoading"
+          :disabled="!knowledgeBaseId.trim() || kbStore.isLoading"
           class="btn btn-update-kb"
         >
           Update Time
         </button>
-        <select v-model="selectedKnowledgeBaseId" class="kb-select">
-          <option value="">Select Knowledge Base (Optional)</option>
-          <option v-for="kb in knowledgeBases" :key="kb.id" :value="kb.id">
-            {{ kb.name }}
-          </option>
-        </select>
+        <input
+          v-model="knowledgeBaseId"
+          placeholder="Enter Knowledge Base ID (optional)"
+          class="kb-input"
+        />
         <div class="time-display">Current: {{ currentTimeGreeting }}</div>
       </div>
     </div>
@@ -134,7 +133,7 @@ const videoRef = ref(null)
 const avatarId = ref('')
 const voiceId = ref('')
 const textToSpeak = ref('')
-const selectedKnowledgeBaseId = ref('')
+const knowledgeBaseId = ref('') // Changed from selectedKnowledgeBaseId to knowledgeBaseId
 const videoFitMode = ref('contain')
 const videoSize = ref('medium')
 
@@ -160,14 +159,18 @@ onMounted(() => {
     videoRef.value.muted = false
     videoRef.value.volume = 1.0
   }
-  // Auto-load knowledge bases
+  // Auto-load knowledge bases (optional, for reference)
   listKnowledgeBases()
 })
 
 // Methods
 async function createInsuranceKB() {
   try {
-    await kbStore.createInsuranceKnowledgeBase()
+    const newKB = await kbStore.createInsuranceKnowledgeBase()
+    // Auto-fill the input with newly created KB ID
+    if (newKB && newKB.id) {
+      knowledgeBaseId.value = newKB.id
+    }
     await listKnowledgeBases()
   } catch (error) {
     console.error('Failed to create knowledge base:', error)
@@ -184,14 +187,14 @@ async function listKnowledgeBases() {
 
 async function handleStart() {
   try {
-    // Update KB dengan waktu terkini sebelum start
-    if (selectedKnowledgeBaseId.value) {
+    // Update KB dengan waktu terkini sebelum start (jika ada KB ID)
+    if (knowledgeBaseId.value.trim()) {
       await updateKBWithCurrentTime()
       // Tunggu sebentar untuk memastikan update selesai
       await new Promise(resolve => setTimeout(resolve, 1000))
     }
 
-    await avatarStore.startSession(avatarId.value, voiceId.value, selectedKnowledgeBaseId.value)
+    await avatarStore.startSession(avatarId.value, voiceId.value, knowledgeBaseId.value.trim() || null)
 
     // Ensure video element is unmuted and properly configured after connection
     setTimeout(() => {
@@ -242,10 +245,10 @@ async function handleSpeak(type) {
 }
 
 async function updateKBWithCurrentTime() {
-  if (!selectedKnowledgeBaseId.value) return
+  if (!knowledgeBaseId.value.trim()) return
 
   try {
-    await kbStore.updateKnowledgeBaseWithCurrentTime(selectedKnowledgeBaseId.value)
+    await kbStore.updateKnowledgeBaseWithCurrentTime(knowledgeBaseId.value.trim())
   } catch (error) {
     console.error('Failed to update knowledge base with current time:', error)
   }
@@ -579,18 +582,22 @@ function resetVideoSettings() {
   border-radius: 3px;
 }
 
-.kb-select {
+.kb-input {
   flex: 1;
-  min-width: 200px;
+  min-width: 250px;
   padding: 12px;
   border: 2px solid #ddd;
   border-radius: 8px;
   font-size: 14px;
 }
 
-.kb-select:focus {
+.kb-input:focus {
   outline: none;
   border-color: #007bff;
+}
+
+.kb-input::placeholder {
+  color: #999;
 }
 
 .time-display {
@@ -625,6 +632,10 @@ function resetVideoSettings() {
   .video-fit-select,
   .video-size-select {
     min-width: 180px;
+  }
+  
+  .kb-input {
+    min-width: 200px;
   }
 }
 </style>
