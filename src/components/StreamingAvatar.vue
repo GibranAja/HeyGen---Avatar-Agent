@@ -45,28 +45,75 @@
         <button @click="handleClose" :disabled="!isConnected" class="btn btn-close">Close</button>
       </div>
 
-      <div class="input-row">
-        <input
-          v-model="textToSpeak"
-          placeholder="Enter text for avatar to speak"
-          class="text-input"
-          @keyup.enter="handleSpeak('repeat')"
-          :disabled="!isConnected"
-        />
-        <button
-          @click="handleSpeak('talk')"
-          :disabled="!isConnected || !textToSpeak.trim()"
-          class="btn btn-talk"
-        >
-          Talk (LLM)
-        </button>
-        <button
-          @click="handleSpeak('repeat')"
-          :disabled="!isConnected || !textToSpeak.trim()"
-          class="btn btn-repeat"
-        >
-          Repeat
-        </button>
+      <!-- Chat Interface -->
+      <div class="chat-section" v-if="isConnected">
+        <h4>Chat with Avatar</h4>
+        <div class="input-mode-selector">
+          <label class="mode-option">
+            <input type="radio" v-model="inputMode" value="text" />
+            <span>Text Input</span>
+          </label>
+          <label class="mode-option">
+            <input type="radio" v-model="inputMode" value="voice" />
+            <span>Voice Input</span>
+          </label>
+        </div>
+
+        <!-- Text Input Mode -->
+        <div v-if="inputMode === 'text'" class="text-input-section">
+          <div class="input-row">
+            <input
+              v-model="textToSpeak"
+              placeholder="Type your message here..."
+              class="text-input"
+              @keyup.enter="handleSendMessage"
+              :disabled="!isConnected"
+            />
+            <button
+              @click="handleSendMessage"
+              :disabled="!isConnected || !textToSpeak.trim()"
+              class="btn btn-send"
+            >
+              Send
+            </button>
+          </div>
+        </div>
+
+        <!-- Voice Input Mode -->
+        <div v-if="inputMode === 'voice'" class="voice-input-section">
+          <div class="voice-controls">
+            <button
+              @click="toggleVoiceRecording"
+              :disabled="!isConnected"
+              :class="['btn', 'btn-voice', { 'recording': isRecording }]"
+            >
+              {{ isRecording ? 'Stop Recording' : 'Start Recording' }}
+            </button>
+            <div v-if="isRecording" class="recording-indicator">
+              🔴 Recording...
+            </div>
+            <div v-if="transcribedText" class="transcribed-text">
+              Transcribed: "{{ transcribedText }}"
+            </div>
+          </div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="quick-actions">
+          <button
+            @click="handleSpeak('repeat', textToSpeak)"
+            :disabled="!isConnected || !textToSpeak.trim()"
+            class="btn btn-repeat"
+          >
+            Repeat
+          </button>
+          <button
+            @click="clearChatHistory"
+            class="btn btn-clear-chat"
+          >
+            Clear Chat
+          </button>
+        </div>
       </div>
     </div>
 
@@ -111,6 +158,25 @@
       </div>
     </div>
 
+    <!-- Chat History -->
+    <div v-if="isConnected" class="chat-history-container">
+      <h4>Conversation History</h4>
+      <div class="chat-messages">
+        <div
+          v-for="(message, index) in chatHistory"
+          :key="index"
+          :class="['message', message.type]"
+        >
+          <div class="message-header">
+            <span class="message-sender">{{ message.sender }}</span>
+            <span class="message-time">{{ message.time }}</span>
+            <span v-if="message.inputMethod" class="input-method">{{ message.inputMethod }}</span>
+          </div>
+          <div class="message-content">{{ message.content }}</div>
+        </div>
+      </div>
+    </div>
+
     <!-- Logs -->
     <div class="logs-container">
       <div v-for="(log, index) in logs" :key="index" class="log-entry">
@@ -133,9 +199,16 @@ const videoRef = ref(null)
 const avatarId = ref('')
 const voiceId = ref('')
 const textToSpeak = ref('')
-const knowledgeBaseId = ref('') // Changed from selectedKnowledgeBaseId to knowledgeBaseId
+const knowledgeBaseId = ref('')
 const videoFitMode = ref('contain')
 const videoSize = ref('medium')
+
+// Chat functionality
+const inputMode = ref('text') // 'text' or 'voice'
+const isRecording = ref(false)
+const transcribedText = ref('')
+const chatHistory = ref([])
+const recognition = ref(null)
 
 // Computed properties
 const isConnected = computed(() => avatarStore.isConnected)
@@ -153,21 +226,125 @@ watch(videoFitMode, (newMode) => {
   updateVideoFit()
 })
 
-// Ensure video is unmuted when component mounts
+// Initialize speech recognition
 onMounted(() => {
   if (videoRef.value) {
     videoRef.value.muted = false
     videoRef.value.volume = 1.0
   }
-  // Auto-load knowledge bases (optional, for reference)
   listKnowledgeBases()
+  initializeSpeechRecognition()
 })
 
-// Methods
+// Speech Recognition Setup
+function initializeSpeechRecognition() {
+  if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    recognition.value = new SpeechRecognition()
+    
+    recognition.value.continuous = false
+    recognition.value.interimResults = false
+    recognition.value.lang = 'id-ID' // Indonesian language
+    
+    recognition.value.onstart = () => {
+      console.log('Speech recognition started')
+    }
+    
+    recognition.value.onresult = (event) => {
+      const transcript = event.results[0][0].transcript
+      transcribedText.value = transcript
+      textToSpeak.value = transcript
+      
+      // Auto send after voice input
+      setTimeout(() => {
+        handleSendMessage('voice')
+      }, 500)
+    }
+    
+    recognition.value.onerror = (event) => {
+      console.error('Speech recognition error:', event.error)
+      isRecording.value = false
+      addChatMessage('System', `Voice recognition error: ${event.error}`, 'system')
+    }
+    
+    recognition.value.onend = () => {
+      isRecording.value = false
+    }
+  } else {
+    console.warn('Speech recognition not supported in this browser')
+  }
+}
+
+// Chat Functions
+function addChatMessage(sender, content, type = 'user', inputMethod = '') {
+  const message = {
+    sender,
+    content,
+    type,
+    time: new Date().toLocaleTimeString(),
+    inputMethod
+  }
+  chatHistory.value.push(message)
+  
+  // Auto scroll to bottom
+  setTimeout(() => {
+    const chatContainer = document.querySelector('.chat-messages')
+    if (chatContainer) {
+      chatContainer.scrollTop = chatContainer.scrollHeight
+    }
+  }, 100)
+}
+
+function clearChatHistory() {
+  chatHistory.value = []
+}
+
+function toggleVoiceRecording() {
+  if (!recognition.value) {
+    addChatMessage('System', 'Speech recognition not available in this browser', 'system')
+    return
+  }
+  
+  if (isRecording.value) {
+    recognition.value.stop()
+    isRecording.value = false
+  } else {
+    transcribedText.value = ''
+    recognition.value.start()
+    isRecording.value = true
+  }
+}
+
+async function handleSendMessage(method = 'text') {
+  if (!textToSpeak.value.trim()) return
+
+  const message = textToSpeak.value.trim()
+  const inputMethodLabel = method === 'voice' ? '🎤' : '⌨️'
+  
+  // Add user message to chat
+  addChatMessage('You', message, 'user', inputMethodLabel)
+  
+  try {
+    // Send to avatar with 'talk' type for LLM response
+    await avatarStore.speak(message, 'talk')
+    
+    // Add avatar response placeholder (since we can't get the actual response text)
+    addChatMessage('Avatar', `Responding to: "${message}"`, 'avatar')
+    
+    // Clear input
+    textToSpeak.value = ''
+    transcribedText.value = ''
+    
+  } catch (error) {
+    console.error('Failed to send message:', error)
+    addChatMessage('System', 'Failed to send message', 'system')
+  }
+}
+
+// Existing methods
 async function createInsuranceKB() {
   try {
     const newKB = await kbStore.createInsuranceKnowledgeBase()
-    // Auto-fill the input with newly created KB ID
     if (newKB && newKB.id) {
       knowledgeBaseId.value = newKB.id
     }
@@ -187,26 +364,21 @@ async function listKnowledgeBases() {
 
 async function handleStart() {
   try {
-    // Update KB dengan waktu terkini sebelum start (jika ada KB ID)
     if (knowledgeBaseId.value.trim()) {
       await updateKBWithCurrentTime()
-      // Tunggu sebentar untuk memastikan update selesai
       await new Promise(resolve => setTimeout(resolve, 1000))
     }
 
     await avatarStore.startSession(avatarId.value, voiceId.value, knowledgeBaseId.value.trim() || null)
 
-    // Ensure video element is unmuted and properly configured after connection
     setTimeout(() => {
       if (videoRef.value) {
         videoRef.value.muted = false
         videoRef.value.volume = 1.0
-        // Apply current video fit setting
         updateVideoFit()
       }
     }, 1000)
 
-    // Tunggu sampai avatar siap, lalu otomatis mulai greeting
     setTimeout(async () => {
       if (avatarStore.streamReady && avatarStore.isConnected) {
         const currentGreeting = kbStore.getTimeGreeting()
@@ -215,10 +387,12 @@ async function handleStart() {
         console.log('Auto greeting with:', currentGreeting)
         console.log('Greeting script:', greetingScript)
         
-        // Gunakan greeting script yang sudah sesuai waktu
+        // Add greeting to chat history
+        addChatMessage('Avatar', greetingScript, 'avatar', '🤖')
+        
         await avatarStore.speak(greetingScript, 'talk')
       }
-    }, 2000) // Tunggu 2 detik setelah koneksi berhasil
+    }, 2000)
     
   } catch (error) {
     console.error('Failed to start session:', error)
@@ -228,17 +402,20 @@ async function handleStart() {
 async function handleClose() {
   try {
     await avatarStore.closeSession()
+    // Clear chat when session closes
+    clearChatHistory()
   } catch (error) {
     console.error('Failed to close session:', error)
   }
 }
 
-async function handleSpeak(type) {
-  if (!textToSpeak.value.trim()) return
+async function handleSpeak(type, text = null) {
+  const message = text || textToSpeak.value
+  if (!message.trim()) return
 
   try {
-    await avatarStore.speak(textToSpeak.value, type)
-    textToSpeak.value = ''
+    await avatarStore.speak(message, type)
+    if (!text) textToSpeak.value = '' // Only clear if using default input
   } catch (error) {
     console.error('Failed to speak:', error)
   }
@@ -255,7 +432,6 @@ async function updateKBWithCurrentTime() {
 }
 
 function updateVideoFit() {
-  // Force re-render video element with new fit mode
   if (videoRef.value) {
     videoRef.value.style.objectFit = videoFitMode.value
     console.log('Video fit updated to:', videoFitMode.value)
@@ -263,7 +439,6 @@ function updateVideoFit() {
 }
 
 function updateVideoSize() {
-  // The size is handled by CSS classes
   console.log('Video size updated to:', videoSize.value)
 }
 
@@ -617,6 +792,204 @@ function resetVideoSettings() {
   background-color: #fff;
 }
 
+.chat-section {
+  margin-top: 20px;
+  padding: 15px;
+  border: 2px solid #007bff;
+  border-radius: 8px;
+  background-color: #f8fffe;
+}
+
+.chat-section h4 {
+  margin: 0 0 15px 0;
+  color: #007bff;
+  font-size: 16px;
+}
+
+.input-mode-selector {
+  display: flex;
+  gap: 20px;
+  margin-bottom: 15px;
+}
+
+.mode-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.mode-option input[type="radio"] {
+  margin: 0;
+}
+
+.voice-input-section {
+  margin-bottom: 15px;
+}
+
+.voice-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.btn-voice {
+  background-color: #28a745;
+  color: white;
+  min-width: 150px;
+}
+
+.btn-voice.recording {
+  background-color: #dc3545;
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.7; }
+  100% { opacity: 1; }
+}
+
+.recording-indicator {
+  color: #dc3545;
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.transcribed-text {
+  background-color: #e9ecef;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #495057;
+  max-width: 100%;
+  word-wrap: break-word;
+}
+
+.quick-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 15px;
+}
+
+.btn-send {
+  background-color: #007bff;
+  color: white;
+  min-width: 80px;
+}
+
+.btn-send:hover:not(:disabled) {
+  background-color: #0056b3;
+}
+
+.btn-clear-chat {
+  background-color: #6c757d;
+  color: white;
+  font-size: 12px;
+  padding: 8px 16px;
+}
+
+.btn-clear-chat:hover:not(:disabled) {
+  background-color: #5a6268;
+}
+
+.chat-history-container {
+  margin-bottom: 20px;
+  padding: 15px;
+  border: 2px solid #28a745;
+  border-radius: 8px;
+  background-color: #f8fff8;
+}
+
+.chat-history-container h4 {
+  margin: 0 0 15px 0;
+  color: #28a745;
+  font-size: 16px;
+}
+
+.chat-messages {
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 10px;
+  background-color: white;
+  border-radius: 6px;
+  border: 1px solid #dee2e6;
+}
+
+.message {
+  margin-bottom: 15px;
+  padding: 10px;
+  border-radius: 8px;
+  max-width: 80%;
+}
+
+.message.user {
+  background-color: #e3f2fd;
+  margin-left: auto;
+  border: 1px solid #2196f3;
+}
+
+.message.avatar {
+  background-color: #e8f5e8;
+  margin-right: auto;
+  border: 1px solid #4caf50;
+}
+
+.message.system {
+  background-color: #fff3cd;
+  margin: 0 auto;
+  border: 1px solid #ffc107;
+  text-align: center;
+  max-width: 90%;
+}
+
+.message-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 5px;
+  font-size: 12px;
+  color: #666;
+}
+
+.message-sender {
+  font-weight: bold;
+}
+
+.message-time {
+  font-size: 11px;
+}
+
+.input-method {
+  font-size: 14px;
+}
+
+.message-content {
+  font-size: 14px;
+  line-height: 1.4;
+  color: #333;
+}
+
+/* Scrollbar for chat messages */
+.chat-messages::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-messages::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+.chat-messages::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 3px;
+}
+
+.chat-messages::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
 @media (max-width: 768px) {
   .video-controls {
     flex-direction: column;
@@ -636,6 +1009,20 @@ function resetVideoSettings() {
   
   .kb-input {
     min-width: 200px;
+  }
+  
+  .input-mode-selector {
+    flex-direction: column;
+    gap: 10px;
+  }
+  
+  .quick-actions {
+    flex-direction: column;
+    gap: 8px;
+  }
+  
+  .message {
+    max-width: 95%;
   }
 }
 </style>
