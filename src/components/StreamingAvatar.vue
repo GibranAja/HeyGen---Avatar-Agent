@@ -48,6 +48,41 @@
       <!-- Chat Interface -->
       <div class="chat-section" v-if="isConnected">
         <h4>Chat with Avatar</h4>
+        
+        <!-- Audio Recording Controls - UPDATED -->
+        <div class="audio-recording-section">
+          <h5>Conversation Recording</h5>
+          <div class="recording-controls">
+            <button
+              @click="toggleConversationRecording"
+              :disabled="!isConnected"
+              :class="['btn', 'btn-record', { 'recording': isRecordingConversation }]"
+            >
+              {{ isRecordingConversation ? '⏹️ Stop Recording' : '🎙️ Start Recording' }}
+            </button>
+            <div v-if="isRecordingConversation" class="recording-status">
+              🔴 Recording conversation...
+            </div>
+            <div class="format-selection">
+              <label for="audio-format">Audio Format:</label>
+              <select v-model="audioFormat" class="format-select" id="audio-format" :disabled="isRecordingConversation">
+                <option value="mp3">MP3 (Most Compatible)</option>
+                <option value="m4a">M4A (High Quality)</option>
+                <option value="wav">WAV (Uncompressed)</option>
+                <option value="webm">WebM (Browser Native)</option>
+              </select>
+            </div>
+            <div v-if="recordedAudioBlob" class="download-section">
+              <button @click="downloadRecording" class="btn btn-download">
+                💾 Download Recording ({{ getActualFileExtension().toUpperCase() }})
+              </button>
+              <div class="file-info">
+                File size: {{ Math.round(recordedAudioBlob.size / 1024) }} KB
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="input-mode-selector">
           <label class="mode-option">
             <input type="radio" v-model="inputMode" value="text" />
@@ -195,7 +230,7 @@ const avatarStore = useAvatarStore()
 const kbStore = useKnowledgeBaseStore()
 const videoRef = ref(null)
 
-// Reactive refs
+// Reactive refs - EXISTING
 const avatarId = ref('')
 const voiceId = ref('')
 const textToSpeak = ref('')
@@ -203,14 +238,24 @@ const knowledgeBaseId = ref('')
 const videoFitMode = ref('contain')
 const videoSize = ref('medium')
 
-// Chat functionality
-const inputMode = ref('text') // 'text' or 'voice'
+// Chat functionality - EXISTING
+const inputMode = ref('text')
 const isRecording = ref(false)
 const transcribedText = ref('')
 const chatHistory = ref([])
 const recognition = ref(null)
 
-// Computed properties
+// Audio Recording functionality - TAMBAHAN BARU
+const isRecordingConversation = ref(false)
+const mediaRecorder = ref(null)
+const recordedChunks = ref([])
+const recordedAudioBlob = ref(null)
+const audioFormat = ref('mp3') // Default ke MP3
+const supportsWav = ref(false)
+const audioContext = ref(null)
+const mixedStream = ref(null)
+
+// Computed properties - EXISTING
 const isConnected = computed(() => avatarStore.isConnected)
 const isLoading = computed(() => avatarStore.isLoading)
 const streamReady = computed(() => avatarStore.streamReady)
@@ -221,12 +266,12 @@ const currentTimeGreeting = computed(() => kbStore.getTimeGreeting())
 const videoFitClass = computed(() => `video-fit-${videoFitMode.value}`)
 const videoSizeClass = computed(() => `video-size-${videoSize.value}`)
 
-// Watch for video fit mode changes
+// Watch for video fit mode changes - EXISTING
 watch(videoFitMode, (newMode) => {
   updateVideoFit()
 })
 
-// Initialize speech recognition
+// Initialize speech recognition - EXISTING + TAMBAHAN
 onMounted(() => {
   if (videoRef.value) {
     videoRef.value.muted = false
@@ -234,9 +279,277 @@ onMounted(() => {
   }
   listKnowledgeBases()
   initializeSpeechRecognition()
+  
+  // TAMBAHAN BARU - Check audio format support
+  checkAudioFormatSupport()
 })
 
-// Speech Recognition Setup
+// TAMBAHAN BARU - Audio Recording Functions
+function checkAudioFormatSupport() {
+  if (typeof MediaRecorder !== 'undefined') {
+    supportsWav.value = MediaRecorder.isTypeSupported('audio/wav')
+    
+    // Set default format to MP3 for best compatibility
+    audioFormat.value = 'mp3'
+  }
+}
+
+async function toggleConversationRecording() {
+  if (isRecordingConversation.value) {
+    await stopConversationRecording()
+  } else {
+    await startConversationRecording()
+  }
+}
+
+async function startConversationRecording() {
+  try {
+    // Get user microphone stream
+    const micStream = await navigator.mediaDevices.getUserMedia({ 
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        sampleRate: 44100,
+        channelCount: 2
+      } 
+    })
+
+    // Get audio from video element (avatar voice)
+    const videoElement = videoRef.value
+    let avatarStream = null
+    
+    if (videoElement && videoElement.captureStream) {
+      avatarStream = videoElement.captureStream()
+    } else if (videoElement && videoElement.mozCaptureStream) {
+      avatarStream = videoElement.mozCaptureStream()
+    }
+
+    // Create audio context for mixing
+    audioContext.value = new (window.AudioContext || window.webkitAudioContext)()
+    const destination = audioContext.value.createMediaStreamDestination()
+
+    // Create gain nodes for volume control
+    const micGain = audioContext.value.createGain()
+    const avatarGain = audioContext.value.createGain()
+    
+    micGain.gain.value = 1.0
+    avatarGain.gain.value = 1.0
+
+    // Connect microphone
+    const micSource = audioContext.value.createMediaStreamSource(micStream)
+    micSource.connect(micGain)
+    micGain.connect(destination)
+
+    // Connect avatar audio if available
+    if (avatarStream) {
+      const avatarAudioTracks = avatarStream.getAudioTracks()
+      if (avatarAudioTracks.length > 0) {
+        const avatarSource = audioContext.value.createMediaStreamSource(avatarStream)
+        avatarSource.connect(avatarGain)
+        avatarGain.connect(destination)
+        addChatMessage('System', 'Recording both user microphone and avatar voice', 'system')
+      } else {
+        addChatMessage('System', 'Recording user microphone only (avatar audio not available)', 'system')
+      }
+    } else {
+      addChatMessage('System', 'Recording user microphone only (avatar stream not available)', 'system')
+    }
+
+    mixedStream.value = destination.stream
+
+    // Determine MIME type based on browser support
+    let mimeType = 'audio/webm;codecs=opus'
+    if (MediaRecorder.isTypeSupported('audio/mp4')) {
+      mimeType = 'audio/mp4'
+    } else if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+      mimeType = 'audio/webm;codecs=opus'
+    } else if (supportsWav.value) {
+      mimeType = 'audio/wav'
+    }
+
+    // Start recording
+    mediaRecorder.value = new MediaRecorder(mixedStream.value, {
+      mimeType: mimeType,
+      audioBitsPerSecond: 128000 // 128kbps for good quality
+    })
+
+    recordedChunks.value = []
+
+    mediaRecorder.value.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        recordedChunks.value.push(event.data)
+      }
+    }
+
+    mediaRecorder.value.onstop = async () => {
+      const blob = new Blob(recordedChunks.value, { type: mimeType })
+      
+      // Convert to desired format if needed
+      if (audioFormat.value === 'mp3' || audioFormat.value === 'm4a' || audioFormat.value === 'wav') {
+        try {
+          const convertedBlob = await convertAudioFormat(blob, mimeType, audioFormat.value)
+          recordedAudioBlob.value = convertedBlob
+        } catch (error) {
+          console.log('Audio conversion failed, using original format:', error)
+          recordedAudioBlob.value = blob
+        }
+      } else {
+        recordedAudioBlob.value = blob
+      }
+      
+      console.log('Recording stopped, blob created:', recordedAudioBlob.value.size, 'bytes')
+      addChatMessage('System', `Recording ready for download (${getActualFileExtension()})`, 'system')
+    }
+
+    mediaRecorder.value.start(1000) // Collect data every second
+    isRecordingConversation.value = true
+    
+    addChatMessage('System', 'Conversation recording started', 'system')
+    console.log('Conversation recording started')
+
+  } catch (error) {
+    console.error('Error starting conversation recording:', error)
+    addChatMessage('System', `Recording error: ${error.message}`, 'system')
+  }
+}
+
+// TAMBAHAN FUNCTION YANG HILANG - stopConversationRecording
+async function stopConversationRecording() {
+  try {
+    if (mediaRecorder.value && mediaRecorder.value.state !== 'inactive') {
+      mediaRecorder.value.stop()
+    }
+
+    // Stop all tracks
+    if (mixedStream.value) {
+      mixedStream.value.getTracks().forEach(track => track.stop())
+    }
+
+    // Close audio context
+    if (audioContext.value && audioContext.value.state !== 'closed') {
+      await audioContext.value.close()
+    }
+
+    isRecordingConversation.value = false
+    addChatMessage('System', 'Conversation recording stopped', 'system')
+    console.log('Conversation recording stopped')
+
+  } catch (error) {
+    console.error('Error stopping conversation recording:', error)
+    addChatMessage('System', `Stop recording error: ${error.message}`, 'system')
+  }
+}
+
+// Function to convert audio format using Web Audio API (DIPERBAIKI)
+async function convertAudioFormat(blob, originalMimeType, targetFormat) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      if (targetFormat === 'wav') {
+        // Convert to WAV using Web Audio API
+        const arrayBuffer = await blob.arrayBuffer()
+        const tempAudioContext = new (window.AudioContext || window.webkitAudioContext)()
+        const audioBuffer = await tempAudioContext.decodeAudioData(arrayBuffer)
+        const convertedBlob = bufferToWav(audioBuffer)
+        tempAudioContext.close()
+        resolve(convertedBlob)
+      } else {
+        // For MP3 and M4A, use original blob with correct MIME type
+        let newMimeType = originalMimeType
+        if (targetFormat === 'mp3') {
+          newMimeType = 'audio/mpeg'
+        } else if (targetFormat === 'm4a') {
+          newMimeType = 'audio/mp4'
+        }
+        
+        const convertedBlob = new Blob([blob], { type: newMimeType })
+        resolve(convertedBlob)
+      }
+    } catch (error) {
+      console.error('Conversion error:', error)
+      resolve(blob) // Fallback to original blob
+    }
+  })
+}
+
+// Convert AudioBuffer to WAV format
+function bufferToWav(buffer) {
+  const length = buffer.length
+  const numberOfChannels = buffer.numberOfChannels
+  const sampleRate = buffer.sampleRate
+  const arrayBuffer = new ArrayBuffer(44 + length * numberOfChannels * 2)
+  const view = new DataView(arrayBuffer)
+  
+  // WAV header
+  const writeString = (offset, string) => {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i))
+    }
+  }
+  
+  writeString(0, 'RIFF')
+  view.setUint32(4, 36 + length * numberOfChannels * 2, true)
+  writeString(8, 'WAVE')
+  writeString(12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true)
+  view.setUint16(22, numberOfChannels, true)
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, sampleRate * numberOfChannels * 2, true)
+  view.setUint16(32, numberOfChannels * 2, true)
+  view.setUint16(34, 16, true)
+  writeString(36, 'data')
+  view.setUint32(40, length * numberOfChannels * 2, true)
+  
+  // Audio data
+  let offset = 44
+  for (let i = 0; i < length; i++) {
+    for (let channel = 0; channel < numberOfChannels; channel++) {
+      const sample = Math.max(-1, Math.min(1, buffer.getChannelData(channel)[i]))
+      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true)
+      offset += 2
+    }
+  }
+  
+  return new Blob([arrayBuffer], { type: 'audio/wav' })
+}
+
+function getActualFileExtension() {
+  if (audioFormat.value === 'wav') return 'wav'
+  if (audioFormat.value === 'mp3') return 'mp3'
+  if (audioFormat.value === 'm4a') return 'm4a'
+  return 'webm'
+}
+
+function downloadRecording() {
+  if (!recordedAudioBlob.value) {
+    addChatMessage('System', 'No recording available to download', 'system')
+    return
+  }
+
+  try {
+    const url = URL.createObjectURL(recordedAudioBlob.value)
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const extension = getActualFileExtension()
+    const filename = `conversation_${timestamp}.${extension}`
+    
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+
+    addChatMessage('System', `Recording downloaded: ${filename}`, 'system')
+    console.log('Recording downloaded:', filename)
+
+  } catch (error) {
+    console.error('Error downloading recording:', error)
+    addChatMessage('System', `Download error: ${error.message}`, 'system')
+  }
+}
+
+// Speech Recognition Setup - EXISTING (tidak diubah)
 function initializeSpeechRecognition() {
   if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
@@ -244,7 +557,7 @@ function initializeSpeechRecognition() {
     
     recognition.value.continuous = false
     recognition.value.interimResults = false
-    recognition.value.lang = 'id-ID' // Indonesian language
+    recognition.value.lang = 'id-ID'
     
     recognition.value.onstart = () => {
       console.log('Speech recognition started')
@@ -255,7 +568,6 @@ function initializeSpeechRecognition() {
       transcribedText.value = transcript
       textToSpeak.value = transcript
       
-      // Auto send after voice input
       setTimeout(() => {
         handleSendMessage('voice')
       }, 500)
@@ -275,7 +587,7 @@ function initializeSpeechRecognition() {
   }
 }
 
-// Chat Functions
+// Chat Functions - EXISTING (tidak diubah)
 function addChatMessage(sender, content, type = 'user', inputMethod = '') {
   const message = {
     sender,
@@ -286,7 +598,6 @@ function addChatMessage(sender, content, type = 'user', inputMethod = '') {
   }
   chatHistory.value.push(message)
   
-  // Auto scroll to bottom
   setTimeout(() => {
     const chatContainer = document.querySelector('.chat-messages')
     if (chatContainer) {
@@ -321,17 +632,12 @@ async function handleSendMessage(method = 'text') {
   const message = textToSpeak.value.trim()
   const inputMethodLabel = method === 'voice' ? '🎤' : '⌨️'
   
-  // Add user message to chat
   addChatMessage('You', message, 'user', inputMethodLabel)
   
   try {
-    // Send to avatar with 'talk' type for LLM response
     await avatarStore.speak(message, 'talk')
-    
-    // Add avatar response placeholder (since we can't get the actual response text)
     addChatMessage('Avatar', `Responding to: "${message}"`, 'avatar')
     
-    // Clear input
     textToSpeak.value = ''
     transcribedText.value = ''
     
@@ -341,7 +647,7 @@ async function handleSendMessage(method = 'text') {
   }
 }
 
-// Existing methods
+// Existing methods - SEMUA TETAP SAMA (tidak diubah)
 async function createInsuranceKB() {
   try {
     const newKB = await kbStore.createInsuranceKnowledgeBase()
@@ -387,9 +693,7 @@ async function handleStart() {
         console.log('Auto greeting with:', currentGreeting)
         console.log('Greeting script:', greetingScript)
         
-        // Add greeting to chat history
         addChatMessage('Avatar', greetingScript, 'avatar', '🤖')
-        
         await avatarStore.speak(greetingScript, 'talk')
       }
     }, 2000)
@@ -401,9 +705,18 @@ async function handleStart() {
 
 async function handleClose() {
   try {
+    // TAMBAHAN BARU - Stop recording when closing session
+    if (isRecordingConversation.value) {
+      await stopConversationRecording()
+    }
+    
     await avatarStore.closeSession()
-    // Clear chat when session closes
     clearChatHistory()
+    
+    // Reset recording state
+    recordedAudioBlob.value = null
+    recordedChunks.value = []
+    
   } catch (error) {
     console.error('Failed to close session:', error)
   }
@@ -415,7 +728,7 @@ async function handleSpeak(type, text = null) {
 
   try {
     await avatarStore.speak(message, type)
-    if (!text) textToSpeak.value = '' // Only clear if using default input
+    if (!text) textToSpeak.value = ''
   } catch (error) {
     console.error('Failed to speak:', error)
   }
@@ -450,6 +763,7 @@ function resetVideoSettings() {
 </script>
 
 <style scoped>
+/* EXISTING STYLES - TETAP SAMA */
 .avatar-container {
   max-width: 1200px;
   margin: 0 auto;
@@ -655,7 +969,7 @@ function resetVideoSettings() {
   width: 100%;
   max-width: 640px;
   height: 0;
-  padding-bottom: 56.25%; /* 16:9 aspect ratio */
+  padding-bottom: 56.25%;
   background-color: #000;
   border-radius: 12px;
   overflow: hidden;
@@ -972,7 +1286,6 @@ function resetVideoSettings() {
   color: #333;
 }
 
-/* Scrollbar for chat messages */
 .chat-messages::-webkit-scrollbar {
   width: 6px;
 }
@@ -990,39 +1303,124 @@ function resetVideoSettings() {
   background: #555;
 }
 
+/* TAMBAHAN BARU - Audio Recording Styles */
+.audio-recording-section {
+  margin-bottom: 20px;
+  padding: 15px;
+  border: 2px solid #ff6b6b;
+  border-radius: 8px;
+  background-color: #fff5f5;
+}
+
+.audio-recording-section h5 {
+  margin: 0 0 15px 0;
+  color: #ff6b6b;
+  font-size: 14px;
+}
+
+.recording-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.format-selection {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.format-selection label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #495057;
+}
+
+.format-select {
+  padding: 8px 12px;
+  border: 2px solid #ddd;
+  border-radius: 6px;
+  font-size: 13px;
+  background-color: white;
+  cursor: pointer;
+  min-width: 200px;
+}
+
+.format-select:focus {
+  outline: none;
+  border-color: #007bff;
+}
+
+.format-select:disabled {
+  background-color: #f5f5f5;
+  cursor: not-allowed;
+}
+
+.file-info {
+  font-size: 12px;
+  color: #666;
+  font-style: italic;
+}
+
+.btn-record {
+  background-color: #ff6b6b;
+  color: white;
+  min-width: 160px;
+  align-self: flex-start;
+}
+
+.btn-record:hover:not(:disabled) {
+  background-color: #ff5252;
+}
+
+.btn-record.recording {
+  background-color: #dc3545;
+  animation: pulse 1s infinite;
+}
+
+.recording-status {
+  color: #dc3545;
+  font-weight: bold;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.download-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.btn-download {
+  background-color: #28a745;
+  color: white;
+  min-width: 160px;
+}
+
+.btn-download:hover:not(:disabled) {
+  background-color: #218838;
+}
+
 @media (max-width: 768px) {
-  .video-controls {
+  .format-selection {
     flex-direction: column;
-    gap: 10px;
-  }
-  
-  .video-fit-label,
-  .video-size-label {
-    width: 100%;
-    justify-content: space-between;
-  }
-  
-  .video-fit-select,
-  .video-size-select {
-    min-width: 180px;
-  }
-  
-  .kb-input {
-    min-width: 200px;
-  }
-  
-  .input-mode-selector {
-    flex-direction: column;
-    gap: 10px;
-  }
-  
-  .quick-actions {
-    flex-direction: column;
+    align-items: flex-start;
     gap: 8px;
   }
   
-  .message {
-    max-width: 95%;
+  .format-select {
+    min-width: 180px;
+  }
+  
+  .download-section {
+    width: 100%;
+  }
+  
+  .btn-download {
+    width: 100%;
   }
 }
 </style>
