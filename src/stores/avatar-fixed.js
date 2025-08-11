@@ -66,7 +66,7 @@ export const useAvatarStore = defineStore('avatar', {
           headers: {
             accept: 'application/json',
             'content-type': 'application/json',
-            'x-api-key': 'NDhmY2MyZTE4ZWY4NGNkY2JiZWZjNDhiZTgxODliMGQtMTc1NDc0MTM4Mw==',
+            'x-api-key': 'ZDE1ZTdkMTU5ZjhkNGU5OWE3NmZlNjM4MzEzMDY1NDEtMTc1NDg3OTQxNA==',
           },
           data: sessionConfig,
         })
@@ -144,7 +144,7 @@ export const useAvatarStore = defineStore('avatar', {
           headers: {
             accept: 'application/json',
             'content-type': 'application/json',
-            'x-api-key': 'NDhmY2MyZTE4ZWY4NGNkY2JiZWZjNDhiZTgxODliMGQtMTc1NDc0MTM4Mw==',
+            'x-api-key': 'ZDE1ZTdkMTU5ZjhkNGU5OWE3NmZlNjM4MzEzMDY1NDEtMTc1NDg3OTQxNA==',
           },
           data: {
             session_id: this.sessionId,
@@ -325,7 +325,7 @@ export const useAvatarStore = defineStore('avatar', {
           headers: {
             accept: 'application/json',
             'content-type': 'application/json',
-            'x-api-key': 'NDhmY2MyZTE4ZWY4NGNkY2JiZWZjNDhiZTgxODliMGQtMTc1NDc0MTM4Mw==',
+            'x-api-key': 'ZDE1ZTdkMTU5ZjhkNGU5OWE3NmZlNjM4MzEzMDY1NDEtMTc1NDg3OTQxNA==',
           },
           data: speakData,
         })
@@ -350,7 +350,7 @@ export const useAvatarStore = defineStore('avatar', {
             headers: {
               accept: 'application/json',
               'content-type': 'application/json',
-              'x-api-key': 'NDhmY2MyZTE4ZWY4NGNkY2JiZWZjNDhiZTgxODliMGQtMTc1NDc0MTM4Mw==',
+              'x-api-key': 'ZDE1ZTdkMTU5ZjhkNGU5OWE3NmZlNjM4MzEzMDY1NDEtMTc1NDg3OTQxNA==',
             },
             data: {
               session_id: this.sessionId,

@@ -20,7 +20,7 @@
           placeholder="Enter Knowledge Base ID (optional)"
           class="kb-input"
         />
-        <div class="time-display">Current: {{ currentTimeGreeting }}</div>
+        <div class="time-display">Waktu sekarang: {{ currentTimeGreeting }}</div>
       </div>
     </div>
 
@@ -632,7 +632,7 @@ async function handleSendMessage(method = 'text') {
   const message = textToSpeak.value.trim()
   const inputMethodLabel = method === 'voice' ? '🎤' : '⌨️'
   
-  addChatMessage('You', message, 'user', inputMethodLabel)
+  addChatMessage('Iban', message, 'user', inputMethodLabel)
   
   try {
     await avatarStore.speak(message, 'talk')
