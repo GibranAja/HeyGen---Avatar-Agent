@@ -57,6 +57,27 @@
       </div>
     </div>
 
+    <!-- Conversation History Section -->
+    <div class="conversation-section">
+      <div class="conversation-header">
+        <h3>Conversation History</h3>
+        <div class="conversation-controls">
+          <button 
+            v-if="hasMessages" 
+            @click="clearConversation" 
+            class="clear-button"
+            :disabled="isLoading"
+          >
+            Clear History
+          </button>
+          <span class="message-count">{{ messageCount }} messages</span>
+        </div>
+      </div>
+      
+      <!-- Message History Component -->
+      <MessageHistory />
+    </div>
+
     <!-- Logs Container -->
     <div class="logs-container">
       <div v-for="(log, index) in logs" :key="index" class="log-entry">
@@ -70,10 +91,27 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useAvatarStore } from '../stores/avatar-fixed'
 import { useKnowledgeBaseStore } from '../stores/knowledge-base'
+import { useConversation } from '../composables/useConversation'
+import { useStreamingEvents } from '../composables/useStreamingEvents'
+import MessageHistory from './MessageHistory.vue'
 
 const avatarStore = useAvatarStore()
 const kbStore = useKnowledgeBaseStore()
 const videoRef = ref(null)
+
+// Conversation composable
+const {
+  messages,
+  messageCount,
+  hasMessages,
+  clearMessages,
+  handleUserMessage,
+  handleAvatarMessage,
+  endMessage,
+  setUserTalking,
+  setAvatarTalking,
+  setListening
+} = useConversation()
 
 // Default values
 const DEFAULT_AVATAR_ID = 'Thaddeus_ProfessionalLook2_public'
@@ -133,6 +171,42 @@ function handleUserInteraction() {
   }
 }
 
+// Conversation management
+function clearConversation() {
+  try {
+    clearMessages()
+    addSystemMessage('Conversation history cleared')
+  } catch (error) {
+    console.error('Error clearing conversation:', error)
+  }
+}
+
+// Watch for avatar speaking changes to update conversation
+watch(isSpeaking, (newVal, oldVal) => {
+  if (newVal !== oldVal) {
+    setAvatarTalking(newVal)
+    
+    if (newVal) {
+      // Avatar started speaking, pause timer
+      pauseAutoCloseTimer()
+    } else {
+      // Avatar stopped speaking, restart timer and end message
+      setTimeout(() => {
+        if (isConnected.value && !isSpeaking.value) {
+          resetAutoCloseTimer()
+        }
+      }, 1000)
+      
+      endMessage()
+    }
+  }
+})
+
+// Watch for recording changes to update conversation
+watch(isRecording, (newVal) => {
+  setListening(newVal)
+})
+
 // Auto-start when component mounts
 onMounted(async () => {
   console.log('Component mounted, starting auto-initialization...')
@@ -151,21 +225,6 @@ watch(streamReady, (newVal) => {
       startVoiceRecognition()
       resetAutoCloseTimer()
     }, 2000)
-  }
-})
-
-// Watch speaking status for smart timer
-watch(isSpeaking, (newVal) => {
-  if (newVal) {
-    // Avatar started speaking, pause timer
-    pauseAutoCloseTimer()
-  } else {
-    // Avatar stopped speaking, restart timer
-    setTimeout(() => {
-      if (isConnected.value && !isSpeaking.value) {
-        resetAutoCloseTimer()
-      }
-    }, 1000)
   }
 })
 
@@ -192,6 +251,9 @@ async function initializeComponent() {
         const greetingScript = kbStore.generateOpeningScript()
         console.log('Auto greeting:', greetingScript)
         
+        // Create greeting bubble immediately before waiting for speak to complete
+        handleAvatarMessage(greetingScript)
+        
         await avatarStore.speak(greetingScript, 'talk')
       }
     }, 3000)
@@ -199,6 +261,18 @@ async function initializeComponent() {
   } catch (error) {
     console.error('Failed to initialize component:', error)
     addSystemMessage(`Initialization error: ${error.message}`)
+  }
+}
+
+// Fixed: Add missing clearAutoCloseTimers function
+function clearAutoCloseTimers() {
+  if (autoCloseTimer.value) {
+    clearTimeout(autoCloseTimer.value)
+    autoCloseTimer.value = null
+  }
+  if (countdownInterval.value) {
+    clearInterval(countdownInterval.value)
+    countdownInterval.value = null
   }
 }
 
@@ -231,22 +305,15 @@ function pauseAutoCloseTimer() {
   autoCloseCountdown.value = 0
 }
 
-function clearAutoCloseTimers() {
-  if (autoCloseTimer.value) {
-    clearTimeout(autoCloseTimer.value)
-    autoCloseTimer.value = null
-  }
-  if (countdownInterval.value) {
-    clearInterval(countdownInterval.value)
-    countdownInterval.value = null
-  }
-}
-
 async function handleAutoClose() {
   try {
     addSystemMessage('Session auto-closing due to inactivity...')
     
     const closingMessage = "Terima kasih atas waktunya. Semoga harinya menyenangkan!"
+    
+    // Create closing message bubble immediately
+    handleAvatarMessage(closingMessage)
+    
     await avatarStore.speak(closingMessage, 'talk')
     
     setTimeout(async () => {
@@ -273,43 +340,73 @@ async function closeSessionAndDownload() {
     
     addSystemMessage('Session closed. Files will download automatically.')
     
+    // Clear conversation when session ends
+    setTimeout(() => {
+      clearMessages()
+    }, 2000)
+    
   } catch (error) {
     console.error('Error closing session:', error)
   }
 }
 
-// Speech Recognition Setup
+// Streaming events composable
+const { setupStreamingEventListeners } = useStreamingEvents()
+
+// Watch for avatar changes to setup streaming events
+watch(() => avatarStore.avatar, (newAvatar) => {
+  if (newAvatar) {
+    console.log('Setting up streaming event listeners...')
+    setupStreamingEventListeners(newAvatar)
+  }
+})
+
+// Simplified speech recognition - only handle user input
 function initializeSpeechRecognition() {
   if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     recognition.value = new SpeechRecognition()
     
-    recognition.value.continuous = false
-    recognition.value.interimResults = false
+    recognition.value.continuous = true
+    recognition.value.interimResults = true
     recognition.value.lang = 'id-ID'
     
     recognition.value.onstart = () => {
       console.log('Speech recognition started')
       isRecording.value = true
+      avatarStore.setListening(true)
     }
     
     recognition.value.onresult = (event) => {
-      const transcript = event.results[0][0].transcript
-      transcribedText.value = transcript
+      let finalTranscript = ''
       
-      // Auto enable audio on voice input
-      if (!hasUserInteracted.value) {
-        handleUserInteraction()
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript
+        
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript
+        } else {
+          transcribedText.value = transcript
+        }
       }
       
-      setTimeout(() => {
-        handleUserMessage(transcript)
-      }, 500)
+      if (finalTranscript.trim()) {
+        console.log('Final transcript:', finalTranscript)
+        transcribedText.value = finalTranscript
+        
+        // Add user message to conversation history
+        handleUserMessage(finalTranscript.trim())
+        
+        // Send to avatar for processing
+        handleUserMessageToAvatar(finalTranscript.trim())
+      }
     }
     
     recognition.value.onerror = (event) => {
       console.error('Speech recognition error:', event.error)
       isRecording.value = false
+      setListening(false)
+      setUserTalking(false)
       
       setTimeout(() => {
         if (isConnected.value) {
@@ -320,6 +417,8 @@ function initializeSpeechRecognition() {
     
     recognition.value.onend = () => {
       isRecording.value = false
+      setListening(false)
+      setUserTalking(false)
       
       setTimeout(() => {
         if (isConnected.value && !isRecording.value) {
@@ -341,18 +440,16 @@ function startVoiceRecognition() {
   }
 }
 
-// Message Handling
-async function handleUserMessage(message) {
+// Simplified message handler - just send to avatar
+async function handleUserMessageToAvatar(message) {
   if (!message.trim()) return
 
   resetAutoCloseTimer()
   
-  const trimmedMessage = message.trim()
-  
   try {
-    await avatarStore.speak(trimmedMessage, 'talk')
+    // Send user message to avatar - streaming events will handle the avatar response
+    await avatarStore.speak(message.trim(), 'talk')
     transcribedText.value = ''
-    
   } catch (error) {
     console.error('Failed to send message:', error)
     addSystemMessage('Failed to send message')
@@ -502,6 +599,8 @@ function cleanup() {
   if (isRecordingConversation.value) {
     stopConversationRecording()
   }
+  // Clear conversation when component unmounts
+  clearMessages()
 }
 </script>
 
@@ -697,6 +796,64 @@ function cleanup() {
   font-style: italic;
 }
 
+/* Conversation Section */
+.conversation-section {
+  margin: 20px 0;
+  background-color: #f8f9fa;
+  border-radius: 12px;
+  padding: 20px;
+  border: 1px solid #dee2e6;
+}
+
+.conversation-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.conversation-header h3 {
+  margin: 0;
+  color: #333;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.conversation-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.clear-button {
+  background: #dc3545;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.clear-button:hover:not(:disabled) {
+  background: #c82333;
+}
+
+.clear-button:disabled {
+  background: #6c757d;
+  cursor: not-allowed;
+}
+
+.message-count {
+  font-size: 12px;
+  color: #6c757d;
+  font-weight: 500;
+}
+
 @keyframes pulse {
   0% { opacity: 1; }
   50% { opacity: 0.7; }
@@ -713,6 +870,7 @@ function cleanup() {
   padding: 10px;
   border-radius: 8px;
   line-height: 1.3;
+  margin-top: 20px;
 }
 
 .log-entry {
@@ -755,6 +913,17 @@ function cleanup() {
   .notice-content {
     margin: 20px;
     padding: 20px;
+  }
+
+  .conversation-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .conversation-controls {
+    align-self: stretch;
+    justify-content: space-between;
   }
 }
 </style>

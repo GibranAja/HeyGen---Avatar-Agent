@@ -16,6 +16,12 @@ export const useAvatarStore = defineStore('avatar', {
     
     // User interaction tracking
     hasUserInteracted: false,
+    
+    // Conversation integration - following HeyGen best practices
+    currentSender: null,
+    isUserTalking: false,
+    isAvatarTalking: false,
+    isListening: false,
   }),
 
   actions: {
@@ -24,10 +30,22 @@ export const useAvatarStore = defineStore('avatar', {
       this.logs.push(`[${timestamp}] ${message}`)
     },
 
-    // Track user interaction
     setUserInteraction() {
       this.hasUserInteracted = true
       this.addLog('✅ User interaction detected')
+    },
+
+    // New methods following HeyGen best practices
+    setUserTalking(isTalking) {
+      this.isUserTalking = isTalking
+    },
+
+    setAvatarTalking(isTalking) {
+      this.isAvatarTalking = isTalking
+    },
+
+    setListening(isListening) {
+      this.isListening = isListening
     },
 
     async createSession(avatarId, voiceId, knowledgeBaseId = null) {
@@ -229,7 +247,7 @@ export const useAvatarStore = defineStore('avatar', {
           dynacast: true,
         })
 
-        // Setup event listeners SEBELUM connect
+        // Setup event listeners for conversation tracking
         room.on('trackSubscribed', (track, publication, participant) => {
           this.addLog(`✅ Track subscribed: ${track.kind} from ${participant.identity}`)
           console.log('Track subscribed:', track, publication, participant)
@@ -470,8 +488,7 @@ export const useAvatarStore = defineStore('avatar', {
 
       try {
         this.isSpeaking = true
-        this.lastSpokenText = text.trim()
-
+        
         const speakData = {
           session_id: this.sessionId,
           text: text.trim(),
@@ -493,20 +510,19 @@ export const useAvatarStore = defineStore('avatar', {
 
         this.addLog(`Avatar speaking successfully`)
 
+        // Don't set lastSpokenText here - it will be set by the streaming events
         const estimatedDuration = Math.max(3000, (text.length * 200))
         
         setTimeout(() => {
           this.isSpeaking = false
-          this.addLog(`Avatar finished speaking: "${text.trim()}"`)
+          this.addLog(`Avatar finished speaking`)
         }, estimatedDuration)
 
         return response
       } catch (error) {
         this.isSpeaking = false
         console.error('Error speaking:', error)
-        const errorMsg =
-          error.response?.data?.message || error.message || 'Failed to make avatar speak'
-        this.addLog(`Speak Error: ${errorMsg}`)
+        this.addLog(`Speak Error: ${error.message}`)
         throw error
       }
     },
@@ -550,6 +566,8 @@ export const useAvatarStore = defineStore('avatar', {
         this.isSpeaking = false
         this.lastSpokenText = ''
         this.hasUserInteracted = false
+        this.currentSpeechText = ''
+        this.speechQueue = []
         this.addLog('Session closed successfully')
       } catch (error) {
         console.error('Error closing session:', error)
@@ -564,6 +582,8 @@ export const useAvatarStore = defineStore('avatar', {
         this.isSpeaking = false
         this.lastSpokenText = ''
         this.hasUserInteracted = false
+        this.currentSpeechText = ''
+        this.speechQueue = []
       }
     },
 
