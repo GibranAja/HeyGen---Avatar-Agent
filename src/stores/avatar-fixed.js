@@ -11,6 +11,11 @@ export const useAvatarStore = defineStore('avatar', {
     isLoading: false,
     streamReady: false,
     sessionData: null,
+    isSpeaking: false,
+    lastSpokenText: '',
+    
+    // User interaction tracking
+    hasUserInteracted: false,
   }),
 
   actions: {
@@ -19,18 +24,26 @@ export const useAvatarStore = defineStore('avatar', {
       this.logs.push(`[${timestamp}] ${message}`)
     },
 
+    // Track user interaction
+    setUserInteraction() {
+      this.hasUserInteracted = true
+      this.addLog('✅ User interaction detected')
+    },
+
     async createSession(avatarId, voiceId, knowledgeBaseId = null) {
       try {
-        // Basic session configuration
         const sessionConfig = {
           quality: 'medium',
           version: 'v2',
           video_encoding: 'VP8',
           disable_idle_timeout: false,
           activity_idle_timeout: 120,
+          stt_settings: {
+            provider: 'deepgram',
+            confidence: 0.55
+          }
         }
 
-        // Only add avatar_id if provided and not empty
         if (avatarId && avatarId.trim()) {
           sessionConfig.avatar_id = avatarId.trim()
           this.addLog(`Using Avatar ID: ${avatarId.trim()}`)
@@ -38,7 +51,6 @@ export const useAvatarStore = defineStore('avatar', {
           this.addLog('No Avatar ID provided - using default avatar')
         }
 
-        // Only add voice settings if provided and not empty
         if (voiceId && voiceId.trim()) {
           sessionConfig.voice = {
             voice_id: voiceId.trim(),
@@ -47,10 +59,13 @@ export const useAvatarStore = defineStore('avatar', {
           }
           this.addLog(`Using Voice ID: ${voiceId.trim()}`)
         } else {
+          // Provide default voice configuration
+          sessionConfig.voice = {
+            rate: 1
+          }
           this.addLog('No Voice ID provided - using default voice')
         }
 
-        // Add knowledge base if provided
         if (knowledgeBaseId && knowledgeBaseId.trim()) {
           sessionConfig.knowledge_base_id = knowledgeBaseId.trim()
           this.addLog(`Using Knowledge Base ID: ${knowledgeBaseId.trim()}`)
@@ -66,7 +81,7 @@ export const useAvatarStore = defineStore('avatar', {
           headers: {
             accept: 'application/json',
             'content-type': 'application/json',
-            'x-api-key': 'ZDE1ZTdkMTU5ZjhkNGU5OWE3NmZlNjM4MzEzMDY1NDEtMTc1NDg3OTQxNA==',
+            'x-api-key': 'YjA5MzUxNGNlYTIxNGUzZGJjZDgzODZiY2Y3MDNkNGItMTc1NTA2OTY5MQ==',
           },
           data: sessionConfig,
         })
@@ -98,6 +113,7 @@ export const useAvatarStore = defineStore('avatar', {
           this.addLog('- Avatar ID exists in your HeyGen account (if provided)')
           this.addLog('- Voice ID format is correct (if provided)')
           this.addLog('- Account has sufficient credits')
+          this.addLog('- Required fields: stt_settings, voice configuration')
         } else if (error.response?.status === 403) {
           this.addLog('Error 403: Forbidden - Check account permissions and credits')
         } else if (error.response?.status === 404) {
@@ -113,7 +129,6 @@ export const useAvatarStore = defineStore('avatar', {
         this.isLoading = true
         this.addLog('=== Starting New Avatar Session ===')
 
-        // Validate inputs
         if (avatarId && avatarId.trim()) {
           this.addLog(`Avatar ID: ${avatarId.trim()}`)
         } else {
@@ -144,7 +159,7 @@ export const useAvatarStore = defineStore('avatar', {
           headers: {
             accept: 'application/json',
             'content-type': 'application/json',
-            'x-api-key': 'ZDE1ZTdkMTU5ZjhkNGU5OWE3NmZlNjM4MzEzMDY1NDEtMTc1NDg3OTQxNA==',
+            'x-api-key': 'YjA5MzUxNGNlYTIxNGUzZGJjZDgzODZiY2Y3MDNkNGItMTc1NTA2OTY5MQ==',
           },
           data: {
             session_id: this.sessionId,
@@ -205,75 +220,183 @@ export const useAvatarStore = defineStore('avatar', {
           videoCaptureDefaults: {
             resolution: VideoPresets.h540,
           },
+          audioCaptureDefaults: {
+            autoGainControl: true,
+            echoCancellation: true,
+            noiseSuppression: true,
+          },
+          adaptive: true,
+          dynacast: true,
         })
 
-        // Connect to room
-        await room.connect(this.sessionData.url, this.sessionData.access_token)
-        this.addLog('Connected to LiveKit room')
-
-        // Setup video and audio streams
+        // Setup event listeners SEBELUM connect
         room.on('trackSubscribed', (track, publication, participant) => {
-          this.addLog(`Track subscribed: ${track.kind} from ${participant.identity}`)
+          this.addLog(`✅ Track subscribed: ${track.kind} from ${participant.identity}`)
+          console.log('Track subscribed:', track, publication, participant)
 
           const videoElement = document.getElementById('avatarVideo')
           if (!videoElement) {
-            this.addLog('Video element not found')
+            this.addLog('❌ Video element not found!')
+            console.error('Video element not found!')
             return
           }
 
           if (track.kind === 'video') {
-            this.addLog('Processing video track...')
+            this.addLog('✅ Processing video track...')
+            console.log('Attaching video track to element:', videoElement)
+            
             track.attach(videoElement)
-            this.streamReady = true
-            this.addLog('Video stream attached and ready')
+            
+            // Set video properties but don't force play immediately
+            videoElement.muted = true // Start muted to avoid autoplay issues
+            videoElement.autoplay = true
+            videoElement.playsInline = true
+            
+            // Try to play after user interaction
+            if (this.hasUserInteracted) {
+              videoElement.muted = false
+              videoElement.volume = 1.0
+              videoElement.play().then(() => {
+                this.addLog('✅ Video playing successfully')
+                this.streamReady = true
+                console.log('Video is now playing')
+              }).catch((err) => {
+                this.addLog(`❌ Video play error: ${err.message}`)
+                console.error('Video play error:', err)
+                this.streamReady = true // Still set ready even if autoplay fails
+              })
+            } else {
+              this.streamReady = true
+              this.addLog('✅ Video ready - waiting for user interaction')
+            }
+            
+            this.addLog('✅ Video stream attached and ready')
           }
 
           if (track.kind === 'audio') {
-            this.addLog('Processing audio track...')
-            track.attach(videoElement)
+            this.addLog('✅ Processing audio track...')
+            console.log('Attaching audio track')
+            
+            let audioElement = document.getElementById('avatarAudio')
+            if (!audioElement) {
+              audioElement = document.createElement('audio')
+              audioElement.id = 'avatarAudio'
+              audioElement.autoplay = true
+              audioElement.playsInline = true
+              audioElement.controls = false
+              audioElement.muted = true // Start muted to avoid autoplay issues
+              audioElement.volume = 1.0
+              document.body.appendChild(audioElement)
+              this.addLog('✅ Created dedicated audio element')
+            }
 
-            // Force unmute and set volume
-            videoElement.muted = false
-            videoElement.volume = 1.0
+            track.attach(audioElement)
 
-            // Try to enable audio context if blocked
-            this.enableAudioContext()
+            // Only unmute and play if user has interacted
+            if (this.hasUserInteracted) {
+              audioElement.muted = false
+              audioElement.volume = 1.0
+              videoElement.muted = false
+              videoElement.volume = 1.0
 
-            this.addLog('Audio stream attached and unmuted')
+              this.enableAudioContext()
+
+              audioElement.play().then(() => {
+                this.addLog('✅ Audio playing successfully')
+                console.log('Audio is now playing')
+              }).catch((err) => {
+                this.addLog(`❌ Audio play error: ${err.message}`)
+                console.error('Audio play error:', err)
+                this.requestUserInteractionForAudio()
+              })
+            } else {
+              this.addLog('✅ Audio ready - waiting for user interaction')
+              this.requestUserInteractionForAudio()
+            }
+
+            this.addLog('✅ Audio stream attached')
           }
         })
 
         room.on('trackUnsubscribed', (track, publication, participant) => {
           this.addLog(`Track unsubscribed: ${track.kind}`)
+          console.log('Track unsubscribed:', track.kind)
           track.detach()
         })
 
         room.on('disconnected', () => {
-          this.addLog('LiveKit room disconnected')
+          this.addLog('❌ LiveKit room disconnected')
+          console.log('Room disconnected')
           this.streamReady = false
           this.isConnected = false
         })
 
         room.on('participantConnected', (participant) => {
-          this.addLog(`Participant connected: ${participant.identity}`)
+          this.addLog(`✅ Participant connected: ${participant.identity}`)
+          console.log('Participant connected:', participant.identity)
         })
 
         room.on('participantDisconnected', (participant) => {
-          this.addLog(`Participant disconnected: ${participant.identity}`)
+          this.addLog(`❌ Participant disconnected: ${participant.identity}`)
+          console.log('Participant disconnected:', participant.identity)
         })
 
-        this.avatar = room // Store room instance
-        this.addLog('WebRTC connection setup completed')
+        room.on('reconnecting', () => {
+          this.addLog('🔄 Room reconnecting...')
+          console.log('Room reconnecting')
+        })
+
+        room.on('reconnected', () => {
+          this.addLog('✅ Room reconnected')
+          console.log('Room reconnected')
+        })
+
+        // Connect to room
+        this.addLog('🔄 Connecting to LiveKit room...')
+        console.log('Connecting to room with URL:', this.sessionData.url)
+        
+        await room.connect(this.sessionData.url, this.sessionData.access_token)
+        this.addLog('✅ Connected to LiveKit room successfully')
+        console.log('Room connected successfully')
+
+        // Safely iterate through participants
+        if (room.participants && typeof room.participants.forEach === 'function') {
+          room.participants.forEach((participant) => {
+            this.addLog(`Found participant: ${participant.identity}`)
+            if (participant.tracks && typeof participant.tracks.forEach === 'function') {
+              participant.tracks.forEach((publication) => {
+                if (publication.track) {
+                  this.addLog(`Found existing track: ${publication.track.kind}`)
+                }
+              })
+            }
+          })
+        } else if (room.participants && room.participants.size !== undefined) {
+          // Handle Map object
+          room.participants.forEach((participant) => {
+            this.addLog(`Found participant: ${participant.identity}`)
+            if (participant.tracks && participant.tracks.size !== undefined) {
+              participant.tracks.forEach((publication) => {
+                if (publication.track) {
+                  this.addLog(`Found existing track: ${publication.track.kind}`)
+                }
+              })
+            }
+          })
+        }
+
+        this.avatar = room
+        this.addLog('✅ WebRTC connection setup completed')
+        console.log('WebRTC setup completed, room:', room)
+        
       } catch (error) {
         console.error('Error setting up WebRTC:', error)
-        this.addLog(`WebRTC Error: ${error.message}`)
+        this.addLog(`❌ WebRTC Error: ${error.message}`)
       }
     },
 
-    // Tambahkan method baru untuk mengatasi audio context blocking
     enableAudioContext() {
       try {
-        // Create audio context if it doesn't exist
         if (
           typeof window.AudioContext !== 'undefined' ||
           typeof window.webkitAudioContext !== 'undefined'
@@ -287,16 +410,51 @@ export const useAvatarStore = defineStore('avatar', {
             window.audioContext
               .resume()
               .then(() => {
-                this.addLog('Audio context resumed successfully')
+                this.addLog('✅ Audio context resumed successfully')
               })
               .catch((err) => {
-                this.addLog(`Failed to resume audio context: ${err.message}`)
+                this.addLog(`❌ Failed to resume audio context: ${err.message}`)
               })
           }
         }
       } catch (error) {
-        this.addLog(`Audio context error: ${error.message}`)
+        this.addLog(`❌ Audio context error: ${error.message}`)
       }
+    },
+
+    requestUserInteractionForAudio() {
+      const enableAudio = () => {
+        this.hasUserInteracted = true
+        
+        const audioElement = document.getElementById('avatarAudio')
+        const videoElement = document.getElementById('avatarVideo')
+        
+        if (audioElement) {
+          audioElement.muted = false
+          audioElement.volume = 1.0
+          audioElement.play().catch(console.error)
+        }
+        
+        if (videoElement) {
+          videoElement.muted = false
+          videoElement.volume = 1.0
+          videoElement.play().catch(console.error)
+        }
+        
+        this.enableAudioContext()
+        
+        document.removeEventListener('click', enableAudio)
+        document.removeEventListener('touchstart', enableAudio)
+        document.removeEventListener('keydown', enableAudio)
+        
+        this.addLog('✅ Audio enabled via user interaction')
+      }
+
+      document.addEventListener('click', enableAudio, { once: true })
+      document.addEventListener('touchstart', enableAudio, { once: true })
+      document.addEventListener('keydown', enableAudio, { once: true })
+      
+      this.addLog('🎤 Click anywhere to enable audio')
     },
 
     async speak(text, taskType = 'repeat') {
@@ -311,6 +469,9 @@ export const useAvatarStore = defineStore('avatar', {
       }
 
       try {
+        this.isSpeaking = true
+        this.lastSpokenText = text.trim()
+
         const speakData = {
           session_id: this.sessionId,
           text: text.trim(),
@@ -325,17 +486,28 @@ export const useAvatarStore = defineStore('avatar', {
           headers: {
             accept: 'application/json',
             'content-type': 'application/json',
-            'x-api-key': 'ZDE1ZTdkMTU5ZjhkNGU5OWE3NmZlNjM4MzEzMDY1NDEtMTc1NDg3OTQxNA==',
+            'x-api-key': 'YjA5MzUxNGNlYTIxNGUzZGJjZDgzODZiY2Y3MDNkNGItMTc1NTA2OTY5MQ==',
           },
           data: speakData,
         })
 
         this.addLog(`Avatar speaking successfully`)
+
+        const estimatedDuration = Math.max(3000, (text.length * 200))
+        
+        setTimeout(() => {
+          this.isSpeaking = false
+          this.addLog(`Avatar finished speaking: "${text.trim()}"`)
+        }, estimatedDuration)
+
+        return response
       } catch (error) {
+        this.isSpeaking = false
         console.error('Error speaking:', error)
         const errorMsg =
           error.response?.data?.message || error.message || 'Failed to make avatar speak'
         this.addLog(`Speak Error: ${errorMsg}`)
+        throw error
       }
     },
 
@@ -350,7 +522,7 @@ export const useAvatarStore = defineStore('avatar', {
             headers: {
               accept: 'application/json',
               'content-type': 'application/json',
-              'x-api-key': 'ZDE1ZTdkMTU5ZjhkNGU5OWE3NmZlNjM4MzEzMDY1NDEtMTc1NDg3OTQxNA==',
+              'x-api-key': 'YjA5MzUxNGNlYTIxNGUzZGJjZDgzODZiY2Y3MDNkNGItMTc1NTA2OTY5MQ==',
             },
             data: {
               session_id: this.sessionId,
@@ -364,12 +536,20 @@ export const useAvatarStore = defineStore('avatar', {
           this.addLog('LiveKit room disconnected')
         }
 
+        const audioElement = document.getElementById('avatarAudio')
+        if (audioElement) {
+          audioElement.remove()
+        }
+
         // Reset state
         this.avatar = null
         this.isConnected = false
         this.sessionId = null
         this.sessionData = null
         this.streamReady = false
+        this.isSpeaking = false
+        this.lastSpokenText = ''
+        this.hasUserInteracted = false
         this.addLog('Session closed successfully')
       } catch (error) {
         console.error('Error closing session:', error)
@@ -381,6 +561,9 @@ export const useAvatarStore = defineStore('avatar', {
         this.sessionId = null
         this.sessionData = null
         this.streamReady = false
+        this.isSpeaking = false
+        this.lastSpokenText = ''
+        this.hasUserInteracted = false
       }
     },
 
