@@ -16,12 +16,6 @@ export const useAvatarStore = defineStore('avatar', {
     
     // User interaction tracking
     hasUserInteracted: false,
-    
-    // Conversation integration - following HeyGen best practices
-    currentSender: null,
-    isUserTalking: false,
-    isAvatarTalking: false,
-    isListening: false,
   }),
 
   actions: {
@@ -30,22 +24,10 @@ export const useAvatarStore = defineStore('avatar', {
       this.logs.push(`[${timestamp}] ${message}`)
     },
 
+    // Track user interaction
     setUserInteraction() {
       this.hasUserInteracted = true
       this.addLog('✅ User interaction detected')
-    },
-
-    // New methods following HeyGen best practices
-    setUserTalking(isTalking) {
-      this.isUserTalking = isTalking
-    },
-
-    setAvatarTalking(isTalking) {
-      this.isAvatarTalking = isTalking
-    },
-
-    setListening(isListening) {
-      this.isListening = isListening
     },
 
     async createSession(avatarId, voiceId, knowledgeBaseId = null) {
@@ -99,7 +81,7 @@ export const useAvatarStore = defineStore('avatar', {
           headers: {
             accept: 'application/json',
             'content-type': 'application/json',
-            'x-api-key': 'YjA5MzUxNGNlYTIxNGUzZGJjZDgzODZiY2Y3MDNkNGItMTc1NTA2OTY5MQ==',
+            'x-api-key': 'OWQ0NmQ1NDNjMzg5NGE1Y2I1ZDc2NGJjNzYxMWE1YWQtMTc1NTE0NTI2NA==',
           },
           data: sessionConfig,
         })
@@ -177,7 +159,7 @@ export const useAvatarStore = defineStore('avatar', {
           headers: {
             accept: 'application/json',
             'content-type': 'application/json',
-            'x-api-key': 'YjA5MzUxNGNlYTIxNGUzZGJjZDgzODZiY2Y3MDNkNGItMTc1NTA2OTY5MQ==',
+            'x-api-key': 'OWQ0NmQ1NDNjMzg5NGE1Y2I1ZDc2NGJjNzYxMWE1YWQtMTc1NTE0NTI2NA==',
           },
           data: {
             session_id: this.sessionId,
@@ -233,6 +215,7 @@ export const useAvatarStore = defineStore('avatar', {
 
         // Import LiveKit SDK
         const { Room, VideoPresets } = await import('livekit-client')
+        const { StreamingEvents } = await import('@heygen/streaming-avatar')
 
         const room = new Room({
           videoCaptureDefaults: {
@@ -247,7 +230,36 @@ export const useAvatarStore = defineStore('avatar', {
           dynacast: true,
         })
 
-        // Setup event listeners for conversation tracking
+        // Add event listeners for avatar talking events
+        room.on(StreamingEvents.AVATAR_START_TALKING, (event) => {
+          console.log('🎤 Avatar started talking:', event)
+          this.isSpeaking = true
+          this.addLog('Avatar started talking')
+        })
+
+        room.on(StreamingEvents.AVATAR_TALKING_MESSAGE, (message) => {
+          console.log('💬 Avatar is saying:', message)
+          // Update lastSpokenText with the current message
+          if (message && typeof message === 'string') {
+            this.lastSpokenText = message
+          }
+        })
+
+        room.on(StreamingEvents.AVATAR_STOP_TALKING, (event) => {
+          console.log('🛑 Avatar stopped talking:', event)
+          this.isSpeaking = false
+          this.addLog(`Avatar finished speaking: "${this.lastSpokenText}"`)
+        })
+
+        room.on(StreamingEvents.AVATAR_END_MESSAGE, (message) => {
+          console.log('✅ Avatar final message:', message)
+          // Ensure we have the complete final message
+          if (message && typeof message === 'string') {
+            this.lastSpokenText = message
+          }
+        })
+
+        // Setup event listeners SEBELUM connect
         room.on('trackSubscribed', (track, publication, participant) => {
           this.addLog(`✅ Track subscribed: ${track.kind} from ${participant.identity}`)
           console.log('Track subscribed:', track, publication, participant)
@@ -503,26 +515,40 @@ export const useAvatarStore = defineStore('avatar', {
           headers: {
             accept: 'application/json',
             'content-type': 'application/json',
-            'x-api-key': 'YjA5MzUxNGNlYTIxNGUzZGJjZDgzODZiY2Y3MDNkNGItMTc1NTA2OTY5MQ==',
+            'x-api-key': 'OWQ0NmQ1NDNjMzg5NGE1Y2I1ZDc2NGJjNzYxMWE1YWQtMTc1NTE0NTI2NA==',
           },
           data: speakData,
         })
 
         this.addLog(`Avatar speaking successfully`)
 
-        // Don't set lastSpokenText here - it will be set by the streaming events
+        // If this is a 'talk' type request, the response might be different from the input
+        // For 'repeat' type, the response is the same as the input
+        if (taskType === 'talk') {
+          // We'll capture the response in the response payload if available
+          // Otherwise, fall back to the input text
+          if (response.data && response.data.response) {
+            this.lastSpokenText = response.data.response.trim()
+          }
+        } else {
+          // For repeat tasks, the response is the same as the input
+          this.lastSpokenText = text.trim()
+        }
+
         const estimatedDuration = Math.max(3000, (text.length * 200))
         
         setTimeout(() => {
           this.isSpeaking = false
-          this.addLog(`Avatar finished speaking`)
+          this.addLog(`Avatar finished speaking: "${this.lastSpokenText}"`)
         }, estimatedDuration)
 
         return response
       } catch (error) {
         this.isSpeaking = false
         console.error('Error speaking:', error)
-        this.addLog(`Speak Error: ${error.message}`)
+        const errorMsg =
+          error.response?.data?.message || error.message || 'Failed to make avatar speak'
+        this.addLog(`Speak Error: ${errorMsg}`)
         throw error
       }
     },
@@ -538,7 +564,7 @@ export const useAvatarStore = defineStore('avatar', {
             headers: {
               accept: 'application/json',
               'content-type': 'application/json',
-              'x-api-key': 'YjA5MzUxNGNlYTIxNGUzZGJjZDgzODZiY2Y3MDNkNGItMTc1NTA2OTY5MQ==',
+              'x-api-key': 'OWQ0NmQ1NDNjMzg5NGE1Y2I1ZDc2NGJjNzYxMWE1YWQtMTc1NTE0NTI2NA==',
             },
             data: {
               session_id: this.sessionId,
@@ -566,8 +592,6 @@ export const useAvatarStore = defineStore('avatar', {
         this.isSpeaking = false
         this.lastSpokenText = ''
         this.hasUserInteracted = false
-        this.currentSpeechText = ''
-        this.speechQueue = []
         this.addLog('Session closed successfully')
       } catch (error) {
         console.error('Error closing session:', error)
@@ -582,8 +606,6 @@ export const useAvatarStore = defineStore('avatar', {
         this.isSpeaking = false
         this.lastSpokenText = ''
         this.hasUserInteracted = false
-        this.currentSpeechText = ''
-        this.speechQueue = []
       }
     },
 
