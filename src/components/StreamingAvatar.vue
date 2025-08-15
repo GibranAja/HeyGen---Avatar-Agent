@@ -56,6 +56,13 @@
             "{{ transcribedText }}"
           </div>
         </div>
+
+        <!-- Audio Recording Status Display -->
+        <div v-if="recordedAudioBlob" class="recording-ready-status">
+          <div class="recording-info">
+            📎 Recording ready: {{ Math.round(recordedAudioBlob.size / 1024) }} KB
+          </div>
+        </div>
       </div>
       
       <!-- Add Chat History Section -->
@@ -89,7 +96,7 @@ const videoRef = ref(null)
 // Default values
 const DEFAULT_AVATAR_ID = 'Thaddeus_ProfessionalLook2_public'
 const DEFAULT_VOICE_ID = 'b9d8767fcb1646be972ffc2de07c5229'
-const DEFAULT_KB_ID = 'e60df93242c54836b125ea0adfa6a9ec'
+const DEFAULT_KB_ID = 'bf577ec5ca8a4730bf27f7b9271f4f6a'
 const AUTO_CLOSE_TIMEOUT = 25000
 
 // Reactive refs
@@ -97,11 +104,13 @@ const recognition = ref(null)
 const isRecording = ref(false)
 const transcribedText = ref('')
 
-// Audio Recording functionality
+// Audio Recording functionality - DARI KODE LAMA
 const isRecordingConversation = ref(false)
 const mediaRecorder = ref(null)
 const recordedChunks = ref([])
 const recordedAudioBlob = ref(null)
+const audioFormat = ref('mp3') // Default ke MP3
+const supportsWav = ref(false)
 const audioContext = ref(null)
 const mixedStream = ref(null)
 
@@ -153,6 +162,7 @@ onUnmounted(() => {
 watch(streamReady, (newVal) => {
   if (newVal) {
     setTimeout(async () => {
+      ensureAvatarAudioAccessible()
       await startConversationRecording()
       startVoiceRecognition()
     }, 2000)
@@ -195,6 +205,8 @@ async function initializeComponent() {
     }
 
     initializeSpeechRecognition()
+    // TAMBAHAN BARU - Check audio format support
+    checkAudioFormatSupport()
     
     await kbStore.updateKnowledgeBaseWithCurrentTime(DEFAULT_KB_ID)
     await new Promise(resolve => setTimeout(resolve, 1000))
@@ -236,6 +248,16 @@ async function handleManualClose() {
   } catch (error) {
     console.error('Error in manual close:', error)
     await closeSessionAndDownload()
+  }
+}
+
+// TAMBAHAN BARU - Audio Format Support Check
+function checkAudioFormatSupport() {
+  if (typeof MediaRecorder !== 'undefined') {
+    supportsWav.value = MediaRecorder.isTypeSupported('audio/wav')
+    
+    // Set default format to MP3 for best compatibility
+    audioFormat.value = 'mp3'
   }
 }
 
@@ -349,30 +371,22 @@ function addSystemMessage(content) {
   }
 }
 
-// Audio Recording Functions
-// Replace the startConversationRecording function with this high-quality version
+// FUNGSI AUDIO RECORDING DARI KODE LAMA - COMPLETE IMPLEMENTATION
 async function startConversationRecording() {
   try {
+    addSystemMessage('🎙️ Starting enhanced audio recording...')
+    
     // Get high-quality microphone stream
     const micStream = await navigator.mediaDevices.getUserMedia({ 
       audio: {
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
-        sampleRate: 48000, // Higher sample rate for better quality
-        channelCount: 2    // Stereo recording
+        sampleRate: 48000,
+        channelCount: 2,
+        latency: 0
       } 
     })
-
-    // Get avatar audio stream from video element
-    const videoElement = videoRef.value
-    let avatarStream = null
-    
-    if (videoElement && videoElement.captureStream) {
-      avatarStream = videoElement.captureStream()
-    } else if (videoElement && videoElement.mozCaptureStream) {
-      avatarStream = videoElement.mozCaptureStream()
-    }
 
     // Create high-quality audio context
     audioContext.value = new (window.AudioContext || window.webkitAudioContext)({
@@ -380,161 +394,333 @@ async function startConversationRecording() {
       latencyHint: 'interactive'
     })
     
+    // Wait for audio context to be ready
+    if (audioContext.value.state === 'suspended') {
+      await audioContext.value.resume()
+    }
+    
     const destination = audioContext.value.createMediaStreamDestination()
 
-    // Create audio processing nodes for microphone
+    // Create separate processing chains for microphone and avatar
     const micGain = audioContext.value.createGain()
-    const micCompressor = audioContext.value.createDynamicsCompressor()
-    
-    // Create audio processing nodes for avatar
     const avatarGain = audioContext.value.createGain()
-    const avatarCompressor = audioContext.value.createDynamicsCompressor()
     
-    // Configure microphone processing for clarity
-    micGain.gain.value = 1.5 // Boost microphone volume
-    micCompressor.threshold.value = -24
-    micCompressor.knee.value = 30
-    micCompressor.ratio.value = 12
-    micCompressor.attack.value = 0.003
-    micCompressor.release.value = 0.25
+    // Set optimal gain levels
+    micGain.gain.value = 2.0  // Boost microphone more
+    avatarGain.gain.value = 1.8  // Boost avatar audio more
     
-    // Configure avatar audio processing
-    avatarGain.gain.value = 1.2 // Boost avatar volume slightly
-    avatarCompressor.threshold.value = -24
-    avatarCompressor.knee.value = 30
-    avatarCompressor.ratio.value = 12
-    avatarCompressor.attack.value = 0.003
-    avatarCompressor.release.value = 0.25
-
-    // Connect microphone with audio processing chain
+    // Connect microphone
     const micSource = audioContext.value.createMediaStreamSource(micStream)
-    micSource.connect(micCompressor)
-    micCompressor.connect(micGain)
+    micSource.connect(micGain)
     micGain.connect(destination)
+    addSystemMessage('✅ Microphone connected to recording')
 
-    // Connect avatar audio with processing chain if available
-    if (avatarStream && avatarStream.getAudioTracks().length > 0) {
-      const avatarSource = audioContext.value.createMediaStreamSource(avatarStream)
-      avatarSource.connect(avatarCompressor)
-      avatarCompressor.connect(avatarGain)
-      avatarGain.connect(destination)
-      addSystemMessage('✅ Avatar audio connected to recording')
-    } else {
-      // Fallback method to capture system audio if direct stream not available
-      try {
+    // Enhanced avatar audio capture with multiple fallback methods
+    let avatarAudioCaptured = false
+    
+    // Method 1: Wait and retry for avatarAudio element
+    const maxRetries = 10
+    let retryCount = 0
+    
+    const tryAvatarCapture = async () => {
+      while (retryCount < maxRetries && !avatarAudioCaptured) {
         const audioElement = document.getElementById('avatarAudio')
-        if (audioElement) {
-          const elementStream = audioElement.captureStream ? 
-            audioElement.captureStream() : 
-            audioElement.mozCaptureStream ? 
-              audioElement.mozCaptureStream() : null
+        
+        if (audioElement && audioElement.srcObject) {
+          try {
+            // Ensure audio element is ready
+            if (audioElement.readyState >= 2) { // HAVE_CURRENT_DATA
+              let elementStream = null
               
-          if (elementStream && elementStream.getAudioTracks().length > 0) {
-            const elementSource = audioContext.value.createMediaStreamSource(elementStream)
-            elementSource.connect(avatarCompressor)
-            avatarCompressor.connect(avatarGain)
-            avatarGain.connect(destination)
-            addSystemMessage('✅ Avatar audio connected via audio element')
+              if (audioElement.captureStream) {
+                elementStream = audioElement.captureStream()
+              } else if (audioElement.mozCaptureStream) {
+                elementStream = audioElement.mozCaptureStream()
+              }
+              
+              if (elementStream && elementStream.getAudioTracks().length > 0) {
+                const elementSource = audioContext.value.createMediaStreamSource(elementStream)
+                elementSource.connect(avatarGain)
+                avatarGain.connect(destination)
+                avatarAudioCaptured = true
+                addSystemMessage('✅ Avatar audio captured from audio element')
+                break
+              }
+            }
+          } catch (error) {
+            console.log(`Avatar capture attempt ${retryCount + 1} failed:`, error)
           }
         }
+        
+        retryCount++
+        if (retryCount < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 500))
+        }
+      }
+    }
+    
+    // Start trying to capture avatar audio
+    await tryAvatarCapture()
+    
+    // Method 2: Try video element if audio element failed
+    if (!avatarAudioCaptured) {
+      const videoElement = videoRef.value
+      if (videoElement && videoElement.srcObject) {
+        try {
+          let videoStream = null
+          
+          if (videoElement.captureStream) {
+            videoStream = videoElement.captureStream()
+          } else if (videoElement.mozCaptureStream) {
+            videoStream = videoElement.mozCaptureStream()
+          }
+          
+          if (videoStream) {
+            const videoAudioTracks = videoStream.getAudioTracks()
+            if (videoAudioTracks.length > 0) {
+              const videoSource = audioContext.value.createMediaStreamSource(videoStream)
+              videoSource.connect(avatarGain)
+              avatarGain.connect(destination)
+              avatarAudioCaptured = true
+              addSystemMessage('✅ Avatar audio captured from video element')
+            }
+          }
+        } catch (error) {
+          console.log('Video element capture failed:', error)
+        }
+      }
+    }
+    
+    // Method 3: System audio capture as last resort
+    if (!avatarAudioCaptured) {
+      try {
+        addSystemMessage('🔊 Attempting system audio capture...')
+        const displayStream = await navigator.mediaDevices.getDisplayMedia({
+          video: false,
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            sampleRate: 48000,
+            channelCount: 2
+          }
+        })
+        
+        if (displayStream.getAudioTracks().length > 0) {
+          const systemSource = audioContext.value.createMediaStreamSource(displayStream)
+          systemSource.connect(avatarGain)
+          avatarGain.connect(destination)
+          avatarAudioCaptured = true
+          addSystemMessage('✅ Avatar audio captured via system audio')
+        }
       } catch (error) {
-        console.error('Fallback audio capture error:', error)
+        console.log('System audio capture failed:', error)
+        addSystemMessage('⚠️ System audio capture not available')
       }
     }
 
-    mixedStream.value = destination.stream
+    if (!avatarAudioCaptured) {
+      addSystemMessage('⚠️ Avatar audio not captured - recording microphone only')
+      addSystemMessage('💡 Try using system audio capture when prompted')
+    }
 
-    // Choose highest quality supported codec
+    // Get the mixed stream
+    mixedStream.value = destination.stream
+    
+    // Verify stream has audio tracks
+    const audioTracks = mixedStream.value.getAudioTracks()
+    addSystemMessage(`📊 Recording stream has ${audioTracks.length} audio tracks`)
+    
+    if (audioTracks.length === 0) {
+      throw new Error('No audio tracks in mixed stream')
+    }
+
+    // Choose the best supported format
     let mimeType = 'audio/webm;codecs=opus'
-    const preferredTypes = [
-      'audio/mp4;codecs=mp4a.40.5', // AAC High quality
-      'audio/mpeg',                 // MP3
-      'audio/webm;codecs=opus',     // Opus
-      'audio/webm'                  // WebM
+    const supportedTypes = [
+      'audio/mp4;codecs=mp4a.40.5',
+      'audio/webm;codecs=opus', 
+      'audio/mpeg',
+      'audio/webm'
     ]
     
-    for (const type of preferredTypes) {
+    for (const type of supportedTypes) {
       if (MediaRecorder.isTypeSupported(type)) {
         mimeType = type
-        addSystemMessage(`✅ Using high-quality codec: ${type}`)
         break
       }
     }
+    
+    addSystemMessage(`🎵 Using format: ${mimeType}`)
 
-    // Create media recorder with higher bitrate
+    // Create MediaRecorder with optimal settings
     mediaRecorder.value = new MediaRecorder(mixedStream.value, {
       mimeType: mimeType,
-      audioBitsPerSecond: 256000  // Higher bitrate for better quality
+      audioBitsPerSecond: 320000  // Even higher bitrate
     })
 
     recordedChunks.value = []
 
     mediaRecorder.value.ondataavailable = (event) => {
-      if (event.data.size > 0) {
+      if (event.data && event.data.size > 0) {
         recordedChunks.value.push(event.data)
+        console.log(`Audio chunk recorded: ${event.data.size} bytes`)
       }
     }
 
     mediaRecorder.value.onstop = async () => {
-      // Use correct MIME type for the blob based on recording format
-      let blobType = 'audio/mpeg'
-      if (mimeType.includes('webm')) {
-        blobType = 'audio/webm'
-      } else if (mimeType.includes('mp4')) {
-        blobType = 'audio/mp4'
+      try {
+        if (recordedChunks.value.length === 0) {
+          addSystemMessage('❌ No audio data recorded')
+          return
+        }
+        
+        // Create blob with proper MIME type
+        let blobType = 'audio/mpeg'
+        if (mimeType.includes('webm')) {
+          blobType = 'audio/webm'
+        } else if (mimeType.includes('mp4')) {
+          blobType = 'audio/mp4'
+        }
+        
+        const blob = new Blob(recordedChunks.value, { type: blobType })
+        recordedAudioBlob.value = blob
+        
+        const sizeKB = Math.round(blob.size / 1024)
+        console.log(`Recording completed: ${sizeKB} KB`)
+        addSystemMessage(`✅ Recording ready: ${sizeKB} KB`)
+        
+        // Verify the blob has content
+        if (blob.size < 1000) { // Less than 1KB is suspicious
+          addSystemMessage('⚠️ Warning: Recording file is very small')
+        }
+      } catch (error) {
+        console.error('Error processing recording:', error)
+        addSystemMessage(`❌ Processing error: ${error.message}`)
       }
-      
-      const blob = new Blob(recordedChunks.value, { type: blobType })
-      recordedAudioBlob.value = blob
-      console.log('High-quality recording ready:', recordedAudioBlob.value.size, 'bytes')
     }
 
-    // Collect data more frequently for better quality
-    mediaRecorder.value.start(500)
+    mediaRecorder.value.onerror = (event) => {
+      console.error('MediaRecorder error:', event.error)
+      addSystemMessage(`❌ Recording error: ${event.error}`)
+    }
+
+    mediaRecorder.value.onstart = () => {
+      addSystemMessage('🔴 Recording started successfully')
+    }
+
+    // Start recording with smaller chunks for better reliability
+    mediaRecorder.value.start(250) // 250ms chunks
     isRecordingConversation.value = true
-    addSystemMessage('✅ Enhanced high-quality audio recording started')
+    
+    addSystemMessage('✅ Enhanced recording system active')
     
   } catch (error) {
     console.error('Error starting conversation recording:', error)
-    addSystemMessage(`❌ Audio recording error: ${error.message}`)
+    addSystemMessage(`❌ Failed to start recording: ${error.message}`)
+    
+    // Try a simpler fallback approach
+    if (error.name === 'NotAllowedError') {
+      addSystemMessage('🎤 Microphone permission denied')
+    } else if (error.name === 'NotFoundError') {
+      addSystemMessage('🎤 No microphone found')
+    }
   }
 }
 
-// Replace the stopConversationRecording function with this version that returns a Promise
-async function stopConversationRecording() {
-  return new Promise((resolve) => {
-    try {
-      if (mediaRecorder.value && mediaRecorder.value.state !== 'inactive') {
-        // Set up a listener for the stop event
-        mediaRecorder.value.addEventListener('stop', async () => {
-          const blob = new Blob(recordedChunks.value, { type: 'audio/mpeg' })
-          recordedAudioBlob.value = blob
-          console.log('Recording ready:', recordedAudioBlob.value.size, 'bytes')
-          
-          if (mixedStream.value) {
-            mixedStream.value.getTracks().forEach(track => track.stop())
-          }
-          
-          if (audioContext.value && audioContext.value.state !== 'closed') {
-            await audioContext.value.close()
-          }
-          
-          isRecordingConversation.value = false
-          resolve(true)
-        }, { once: true })
-        
-        // Trigger the stop
-        mediaRecorder.value.stop()
-      } else {
-        // If recorder isn't active, resolve immediately
-        isRecordingConversation.value = false
-        resolve(false)
+// Also update the ensureAvatarAudioAccessible function
+function ensureAvatarAudioAccessible() {
+  // Wait a bit for the avatar audio to be ready
+  setTimeout(() => {
+    const audioElement = document.getElementById('avatarAudio')
+    if (audioElement) {
+      // Configure audio element for better capture
+      audioElement.volume = 1.0
+      audioElement.muted = false
+      audioElement.crossOrigin = 'anonymous'
+      
+      // Ensure autoplay is working
+      audioElement.autoplay = true
+      audioElement.playsInline = true
+      
+      // Force play
+      const playPromise = audioElement.play()
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            addSystemMessage('✅ Avatar audio element playing')
+          })
+          .catch(err => {
+            console.log('Audio play prevented:', err)
+            addSystemMessage('⚠️ Avatar audio autoplay blocked')
+          })
       }
-    } catch (error) {
-      console.error('Error stopping conversation recording:', error)
-      resolve(false)
+      
+      // Add event listeners to monitor audio state
+      audioElement.addEventListener('loadeddata', () => {
+        addSystemMessage('✅ Avatar audio data loaded')
+      })
+      
+      audioElement.addEventListener('canplay', () => {
+        addSystemMessage('✅ Avatar audio can play')
+      })
+      
+      audioElement.addEventListener('playing', () => {
+        addSystemMessage('✅ Avatar audio is playing')
+      })
+      
+    } else {
+      addSystemMessage('⚠️ Avatar audio element not found yet')
+      // Retry after a delay
+      setTimeout(ensureAvatarAudioAccessible, 1000)
     }
-  })
+  }, 500)
+}
+
+// Update the downloadRecording function to include better error handling
+function downloadRecording() {
+  if (!recordedAudioBlob.value) {
+    addSystemMessage('❌ No recording available to download')
+    return
+  }
+
+  if (recordedAudioBlob.value.size < 1000) {
+    addSystemMessage('⚠️ Warning: Recording is very small, may be empty')
+  }
+
+  try {
+    const url = URL.createObjectURL(recordedAudioBlob.value)
+    
+    // Determine file extension
+    let fileExtension = 'mp3'
+    if (recordedAudioBlob.value.type.includes('webm')) {
+      fileExtension = 'webm'
+    } else if (recordedAudioBlob.value.type.includes('mp4')) {
+      fileExtension = 'm4a'
+    }
+    
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const filename = `conversation_${timestamp}.${fileExtension}`
+    
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.style.display = 'none'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    
+    // Clean up URL after a delay
+    setTimeout(() => {
+      URL.revokeObjectURL(url)
+    }, 1000)
+    
+    const sizeKB = Math.round(recordedAudioBlob.value.size / 1024)
+    addSystemMessage(`✅ Downloaded: ${filename} (${sizeKB} KB)`)
+    console.log('Recording downloaded:', filename, `${sizeKB} KB`)
+  } catch (error) {
+    console.error('Error downloading recording:', error)
+    addSystemMessage(`❌ Download failed: ${error.message}`)
+  }
 }
 
 // Update the closeSessionAndDownload function
@@ -572,40 +758,85 @@ async function closeSessionAndDownload() {
   }
 }
 
-// Update the downloadRecording function to handle different formats
-function downloadRecording() {
-  if (!recordedAudioBlob.value) {
-    console.log('No recording available')
-    addSystemMessage('❌ No recording available to download')
-    return
-  }
-
+// Add this missing function
+async function stopConversationRecording() {
   try {
-    const url = URL.createObjectURL(recordedAudioBlob.value)
-    
-    // Determine appropriate file extension based on the blob type
-    let fileExtension = 'mp3'
-    if (recordedAudioBlob.value.type.includes('webm')) {
-      fileExtension = 'webm'
-    } else if (recordedAudioBlob.value.type.includes('mp4')) {
-      fileExtension = 'm4a'
+    if (!isRecordingConversation.value || !mediaRecorder.value) {
+      addSystemMessage('⚠️ No active recording to stop')
+      return false
     }
+
+    addSystemMessage('🛑 Stopping conversation recording...')
     
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-    const filename = `conversation_${timestamp}.${fileExtension}`
-    
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-    
-    addSystemMessage(`✅ Conversation saved as ${filename}`)
+    return new Promise((resolve) => {
+      mediaRecorder.value.onstop = async () => {
+        try {
+          if (recordedChunks.value.length === 0) {
+            addSystemMessage('❌ No audio data recorded')
+            resolve(false)
+            return
+          }
+          
+          // Create blob with proper MIME type
+          let mimeType = 'audio/webm;codecs=opus'
+          if (mediaRecorder.value.mimeType) {
+            mimeType = mediaRecorder.value.mimeType
+          }
+          
+          let blobType = 'audio/mpeg'
+          if (mimeType.includes('webm')) {
+            blobType = 'audio/webm'
+          } else if (mimeType.includes('mp4')) {
+            blobType = 'audio/mp4'
+          }
+          
+          const blob = new Blob(recordedChunks.value, { type: blobType })
+          recordedAudioBlob.value = blob
+          
+          const sizeKB = Math.round(blob.size / 1024)
+          console.log(`Recording completed: ${sizeKB} KB`)
+          addSystemMessage(`✅ Recording stopped: ${sizeKB} KB`)
+          
+          // Verify the blob has content
+          if (blob.size < 1000) {
+            addSystemMessage('⚠️ Warning: Recording file is very small')
+          }
+          
+          isRecordingConversation.value = false
+          resolve(true)
+        } catch (error) {
+          console.error('Error processing recording:', error)
+          addSystemMessage(`❌ Processing error: ${error.message}`)
+          isRecordingConversation.value = false
+          resolve(false)
+        }
+      }
+
+      // Stop the recording
+      if (mediaRecorder.value.state === 'recording') {
+        mediaRecorder.value.stop()
+      } else {
+        addSystemMessage('⚠️ MediaRecorder not in recording state')
+        resolve(false)
+      }
+
+      // Stop all audio tracks
+      if (mixedStream.value) {
+        mixedStream.value.getTracks().forEach(track => {
+          track.stop()
+        })
+      }
+
+      // Close audio context
+      if (audioContext.value && audioContext.value.state !== 'closed') {
+        audioContext.value.close().catch(console.error)
+      }
+    })
   } catch (error) {
-    console.error('Error downloading recording:', error)
-    addSystemMessage(`❌ Download error: ${error.message}`)
+    console.error('Error stopping recording:', error)
+    addSystemMessage(`❌ Stop recording error: ${error.message}`)
+    isRecordingConversation.value = false
+    return false
   }
 }
 
@@ -617,6 +848,10 @@ function cleanup() {
   if (isRecordingConversation.value) {
     stopConversationRecording()
   }
+  
+  // Reset recording state
+  recordedAudioBlob.value = null
+  recordedChunks.value = []
   
   // Clear conversation history
   conversationStore.clearHistory()
