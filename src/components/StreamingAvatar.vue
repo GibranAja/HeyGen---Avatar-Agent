@@ -534,28 +534,34 @@ async function startConversationRecording() {
       throw new Error('No audio tracks in mixed stream')
     }
 
-    // Choose the best supported format
+    // Prioritize MP3-compatible formats
     let mimeType = 'audio/webm;codecs=opus'
     const supportedTypes = [
-      'audio/mp4;codecs=mp4a.40.5',
-      'audio/webm;codecs=opus', 
-      'audio/mpeg',
-      'audio/webm'
+      'audio/mpeg',                 // MP3 - prioritize this
+      'audio/mp4;codecs=mp4a.40.2', // AAC in MP4
+      'audio/webm;codecs=opus',     // WebM Opus (fallback)
+      'audio/webm'                  // Basic WebM (last resort)
     ]
     
     for (const type of supportedTypes) {
       if (MediaRecorder.isTypeSupported(type)) {
         mimeType = type
+        addSystemMessage(`✅ Using codec: ${type}`)
         break
       }
     }
     
-    addSystemMessage(`🎵 Using format: ${mimeType}`)
+    // If we're still using WebM, note that we'll download as MP3 anyway
+    if (mimeType.includes('webm')) {
+      addSystemMessage(`🎵 Recording in ${mimeType}, will download as MP3`)
+    } else {
+      addSystemMessage(`🎵 Using MP3-compatible format: ${mimeType}`)
+    }
 
     // Create MediaRecorder with optimal settings
     mediaRecorder.value = new MediaRecorder(mixedStream.value, {
       mimeType: mimeType,
-      audioBitsPerSecond: 320000  // Even higher bitrate
+      audioBitsPerSecond: 256000  // High quality bitrate
     })
 
     recordedChunks.value = []
@@ -574,23 +580,16 @@ async function startConversationRecording() {
           return
         }
         
-        // Create blob with proper MIME type
-        let blobType = 'audio/mpeg'
-        if (mimeType.includes('webm')) {
-          blobType = 'audio/webm'
-        } else if (mimeType.includes('mp4')) {
-          blobType = 'audio/mp4'
-        }
-        
-        const blob = new Blob(recordedChunks.value, { type: blobType })
+        // Always create blob for MP3 download, regardless of recording format
+        const blob = new Blob(recordedChunks.value, { type: 'audio/mpeg' })
         recordedAudioBlob.value = blob
         
         const sizeKB = Math.round(blob.size / 1024)
         console.log(`Recording completed: ${sizeKB} KB`)
-        addSystemMessage(`✅ Recording ready: ${sizeKB} KB`)
+        addSystemMessage(`✅ Recording ready for MP3 download: ${sizeKB} KB`)
         
         // Verify the blob has content
-        if (blob.size < 1000) { // Less than 1KB is suspicious
+        if (blob.size < 1000) {
           addSystemMessage('⚠️ Warning: Recording file is very small')
         }
       } catch (error) {
@@ -605,14 +604,14 @@ async function startConversationRecording() {
     }
 
     mediaRecorder.value.onstart = () => {
-      addSystemMessage('🔴 Recording started successfully')
+      addSystemMessage('🔴 Recording started - will save as MP3')
     }
 
     // Start recording with smaller chunks for better reliability
     mediaRecorder.value.start(250) // 250ms chunks
     isRecordingConversation.value = true
     
-    addSystemMessage('✅ Enhanced recording system active')
+    addSystemMessage('✅ Enhanced recording system active - MP3 output')
     
   } catch (error) {
     console.error('Error starting conversation recording:', error)
@@ -627,138 +626,7 @@ async function startConversationRecording() {
   }
 }
 
-// Also update the ensureAvatarAudioAccessible function
-function ensureAvatarAudioAccessible() {
-  // Wait a bit for the avatar audio to be ready
-  setTimeout(() => {
-    const audioElement = document.getElementById('avatarAudio')
-    if (audioElement) {
-      // Configure audio element for better capture
-      audioElement.volume = 1.0
-      audioElement.muted = false
-      audioElement.crossOrigin = 'anonymous'
-      
-      // Ensure autoplay is working
-      audioElement.autoplay = true
-      audioElement.playsInline = true
-      
-      // Force play
-      const playPromise = audioElement.play()
-      if (playPromise !== undefined) {
-        playPromise
-          .then(() => {
-            addSystemMessage('✅ Avatar audio element playing')
-          })
-          .catch(err => {
-            console.log('Audio play prevented:', err)
-            addSystemMessage('⚠️ Avatar audio autoplay blocked')
-          })
-      }
-      
-      // Add event listeners to monitor audio state
-      audioElement.addEventListener('loadeddata', () => {
-        addSystemMessage('✅ Avatar audio data loaded')
-      })
-      
-      audioElement.addEventListener('canplay', () => {
-        addSystemMessage('✅ Avatar audio can play')
-      })
-      
-      audioElement.addEventListener('playing', () => {
-        addSystemMessage('✅ Avatar audio is playing')
-      })
-      
-    } else {
-      addSystemMessage('⚠️ Avatar audio element not found yet')
-      // Retry after a delay
-      setTimeout(ensureAvatarAudioAccessible, 1000)
-    }
-  }, 500)
-}
-
-// Update the downloadRecording function to include better error handling
-function downloadRecording() {
-  if (!recordedAudioBlob.value) {
-    addSystemMessage('❌ No recording available to download')
-    return
-  }
-
-  if (recordedAudioBlob.value.size < 1000) {
-    addSystemMessage('⚠️ Warning: Recording is very small, may be empty')
-  }
-
-  try {
-    const url = URL.createObjectURL(recordedAudioBlob.value)
-    
-    // Determine file extension
-    let fileExtension = 'mp3'
-    if (recordedAudioBlob.value.type.includes('webm')) {
-      fileExtension = 'webm'
-    } else if (recordedAudioBlob.value.type.includes('mp4')) {
-      fileExtension = 'm4a'
-    }
-    
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-    const filename = `conversation_${timestamp}.${fileExtension}`
-    
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    a.style.display = 'none'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    
-    // Clean up URL after a delay
-    setTimeout(() => {
-      URL.revokeObjectURL(url)
-    }, 1000)
-    
-    const sizeKB = Math.round(recordedAudioBlob.value.size / 1024)
-    addSystemMessage(`✅ Downloaded: ${filename} (${sizeKB} KB)`)
-    console.log('Recording downloaded:', filename, `${sizeKB} KB`)
-  } catch (error) {
-    console.error('Error downloading recording:', error)
-    addSystemMessage(`❌ Download failed: ${error.message}`)
-  }
-}
-
-// Update the closeSessionAndDownload function
-async function closeSessionAndDownload() {
-  try {
-    addSystemMessage('Preparing to close session...')
-    
-    // First stop the recording and wait for it to complete
-    const recordingStopped = await stopConversationRecording()
-    
-    // Add a short delay to ensure the blob is properly created
-    await new Promise(resolve => setTimeout(resolve, 500))
-    
-    // Download the recording if available
-    if (recordingStopped && recordedAudioBlob.value && recordedAudioBlob.value.size > 0) {
-      downloadRecording()
-      addSystemMessage('✅ Conversation recording downloaded')
-    } else {
-      addSystemMessage('⚠️ No recording available to download')
-    }
-    
-    // Finally close the session
-    await avatarStore.closeSession()
-    
-    // Reset UI state
-    transcribedText.value = ''
-    addSystemMessage('Session closed successfully')
-    
-  } catch (error) {
-    console.error('Error in closeSessionAndDownload:', error)
-    addSystemMessage(`Error closing session: ${error.message}`)
-    
-    // Force close even on error
-    avatarStore.closeSession().catch(console.error)
-  }
-}
-
-// Add this missing function
+// Also update the stopConversationRecording function
 async function stopConversationRecording() {
   try {
     if (!isRecordingConversation.value || !mediaRecorder.value) {
@@ -777,25 +645,13 @@ async function stopConversationRecording() {
             return
           }
           
-          // Create blob with proper MIME type
-          let mimeType = 'audio/webm;codecs=opus'
-          if (mediaRecorder.value.mimeType) {
-            mimeType = mediaRecorder.value.mimeType
-          }
-          
-          let blobType = 'audio/mpeg'
-          if (mimeType.includes('webm')) {
-            blobType = 'audio/webm'
-          } else if (mimeType.includes('mp4')) {
-            blobType = 'audio/mp4'
-          }
-          
-          const blob = new Blob(recordedChunks.value, { type: blobType })
+          // Always create blob as MP3 for download
+          const blob = new Blob(recordedChunks.value, { type: 'audio/mpeg' })
           recordedAudioBlob.value = blob
           
           const sizeKB = Math.round(blob.size / 1024)
           console.log(`Recording completed: ${sizeKB} KB`)
-          addSystemMessage(`✅ Recording stopped: ${sizeKB} KB`)
+          addSystemMessage(`✅ Recording stopped - ready for MP3 download: ${sizeKB} KB`)
           
           // Verify the blob has content
           if (blob.size < 1000) {
@@ -855,6 +711,134 @@ function cleanup() {
   
   // Clear conversation history
   conversationStore.clearHistory()
+}
+
+// Add the missing ensureAvatarAudioAccessible function
+function ensureAvatarAudioAccessible() {
+  // Wait a bit for the avatar audio to be ready
+  setTimeout(() => {
+    const audioElement = document.getElementById('avatarAudio')
+    if (audioElement) {
+      // Configure audio element for better capture
+      audioElement.volume = 1.0
+      audioElement.muted = false
+      audioElement.crossOrigin = 'anonymous'
+      
+      // Ensure autoplay is working
+      audioElement.autoplay = true
+      audioElement.playsInline = true
+      
+      // Force play
+      const playPromise = audioElement.play()
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            addSystemMessage('✅ Avatar audio element playing')
+          })
+          .catch(err => {
+            console.log('Audio play prevented:', err)
+            addSystemMessage('⚠️ Avatar audio autoplay blocked')
+          })
+      }
+      
+      // Add event listeners to monitor audio state
+      audioElement.addEventListener('loadeddata', () => {
+        addSystemMessage('✅ Avatar audio data loaded')
+      })
+      
+      audioElement.addEventListener('canplay', () => {
+        addSystemMessage('✅ Avatar audio can play')
+      })
+      
+      audioElement.addEventListener('playing', () => {
+        addSystemMessage('✅ Avatar audio is playing')
+      })
+      
+    } else {
+      addSystemMessage('⚠️ Avatar audio element not found yet')
+      // Retry after a delay
+      setTimeout(ensureAvatarAudioAccessible, 1000)
+    }
+  }, 500)
+}
+
+// Add the missing closeSessionAndDownload function
+async function closeSessionAndDownload() {
+  try {
+    addSystemMessage('🔄 Preparing to close session and download recording...')
+    
+    // Stop conversation recording first
+    if (isRecordingConversation.value) {
+      const recordingStopped = await stopConversationRecording()
+      if (recordingStopped) {
+        addSystemMessage('✅ Recording stopped successfully')
+        
+        // Trigger download if we have recorded audio
+        if (recordedAudioBlob.value) {
+          downloadRecording()
+        }
+      } else {
+        addSystemMessage('⚠️ Failed to stop recording properly')
+      }
+    } else {
+      addSystemMessage('ℹ️ No active recording to stop')
+    }
+    
+    // Close the avatar session
+    await avatarStore.closeSession()
+    addSystemMessage('✅ Avatar session closed')
+    
+    // Reset component state
+    cleanup()
+    addSystemMessage('✅ Session cleanup completed')
+    
+  } catch (error) {
+    console.error('Error in closeSessionAndDownload:', error)
+    addSystemMessage(`❌ Error during session close: ${error.message}`)
+    
+    // Force cleanup even if there were errors
+    cleanup()
+  }
+}
+
+// Add the missing downloadRecording function
+function downloadRecording() {
+  if (!recordedAudioBlob.value) {
+    addSystemMessage('❌ No recording available to download')
+    return
+  }
+
+  if (recordedAudioBlob.value.size < 1000) {
+    addSystemMessage('⚠️ Warning: Recording is very small, may be empty')
+  }
+
+  try {
+    const url = URL.createObjectURL(recordedAudioBlob.value)
+    
+    // Always use MP3 extension regardless of the actual format
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const filename = `conversation_${timestamp}.mp3`
+    
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.style.display = 'none'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    
+    // Clean up URL after a delay
+    setTimeout(() => {
+      URL.revokeObjectURL(url)
+    }, 1000)
+    
+    const sizeKB = Math.round(recordedAudioBlob.value.size / 1024)
+    addSystemMessage(`✅ Downloaded: ${filename} (${sizeKB} KB)`)
+    console.log('Recording downloaded:', filename, `${sizeKB} KB`)
+  } catch (error) {
+    console.error('Error downloading recording:', error)
+    addSystemMessage(`❌ Download failed: ${error.message}`)
+  }
 }
 </script>
 
