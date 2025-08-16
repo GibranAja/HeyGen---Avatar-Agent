@@ -96,7 +96,7 @@ const videoRef = ref(null)
 // Default values
 const DEFAULT_AVATAR_ID = 'Thaddeus_ProfessionalLook2_public'
 const DEFAULT_VOICE_ID = 'b9d8767fcb1646be972ffc2de07c5229'
-const DEFAULT_KB_ID = 'bf577ec5ca8a4730bf27f7b9271f4f6a'
+const DEFAULT_KB_ID = '5cc714f036074e4f92f10e7dcf1d242e'
 const AUTO_CLOSE_TIMEOUT = 25000
 
 // Reactive refs

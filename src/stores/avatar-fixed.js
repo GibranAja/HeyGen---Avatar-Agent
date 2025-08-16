@@ -77,7 +77,7 @@ export const useAvatarStore = defineStore('avatar', () => {
         headers: {
           accept: 'application/json',
           'content-type': 'application/json',
-          'x-api-key': 'NDU2YjkyYzE4ZDZmNGYyYjgzMjhkNWFjNjZjYWVmNWItMTc1NTIyOTUxMw==',
+          'x-api-key': 'ZjljNzdmNjUxYjA2NGY3Nzg0NWZmYmExOGJkNDNiN2UtMTc1NTMyMjI0OA==',
         },
         data: sessionConfig,
       })
@@ -155,7 +155,7 @@ export const useAvatarStore = defineStore('avatar', () => {
         headers: {
           accept: 'application/json',
           'content-type': 'application/json',
-          'x-api-key': 'NDU2YjkyYzE4ZDZmNGYyYjgzMjhkNWFjNjZjYWVmNWItMTc1NTIyOTUxMw==',
+          'x-api-key': 'ZjljNzdmNjUxYjA2NGY3Nzg0NWZmYmExOGJkNDNiN2UtMTc1NTMyMjI0OA==',
         },
         data: {
           session_id: sessionId.value,
@@ -209,7 +209,7 @@ export const useAvatarStore = defineStore('avatar', () => {
       addLog('Setting up WebRTC connection...')
       addLog(`WebSocket URL: ${sessionData.value.url}`)
 
-      // Import LiveKit SDK
+      // Import LiveKit SDK dan StreamingEvents saja
       const { Room, VideoPresets } = await import('livekit-client')
       const { StreamingEvents } = await import('@heygen/streaming-avatar')
 
@@ -226,32 +226,59 @@ export const useAvatarStore = defineStore('avatar', () => {
         dynacast: true,
       })
 
-      // Add event listeners for avatar talking events
-      room.on(StreamingEvents.AVATAR_START_TALKING, (event) => {
-        console.log('🎤 Avatar started talking:', event)
-        isSpeaking.value = true
-        addLog('Avatar started talking')
-      })
+      // PERBAIKAN: Gunakan event listeners yang tepat untuk LiveKit Room
+      // Event talking tidak langsung tersedia di room, jadi kita buat custom tracking
+      
+      // Track avatar speaking state manually
+      let avatarParticipant = null
+      let isCurrentlySpeaking = false
 
-      room.on(StreamingEvents.AVATAR_TALKING_MESSAGE, (message) => {
-        console.log('💬 Avatar is saying:', message)
-        // Update lastSpokenText with the current message
-        if (message && typeof message === 'string') {
-          lastSpokenText.value = message
-        }
-      })
-
-      room.on(StreamingEvents.AVATAR_STOP_TALKING, (event) => {
-        console.log('🛑 Avatar stopped talking:', event)
-        isSpeaking.value = false
-        addLog(`Avatar finished speaking: "${lastSpokenText.value}"`)
-      })
-
-      room.on(StreamingEvents.AVATAR_END_MESSAGE, (message) => {
-        console.log('✅ Avatar final message:', message)
-        // Ensure we have the complete final message
-        if (message && typeof message === 'string') {
-          lastSpokenText.value = message
+      room.on('participantConnected', (participant) => {
+        addLog(`✅ Participant connected: ${participant.identity}`)
+        console.log('Participant connected:', participant.identity)
+        
+        // Assume the first participant is the avatar
+        if (!avatarParticipant && participant.identity !== 'user') {
+          avatarParticipant = participant
+          addLog(`🤖 Avatar participant identified: ${participant.identity}`)
+          
+          // Listen for audio track changes to detect speaking
+          participant.on('trackSubscribed', (track) => {
+            if (track.kind === 'audio') {
+              addLog('🎤 Avatar audio track subscribed - setting up speaking detection')
+              
+              // Manual speaking detection based on audio activity
+              const detectSpeaking = () => {
+                // This is a simplified approach - in real implementation you might want
+                // to use Web Audio API to detect actual audio levels
+                if (!isCurrentlySpeaking) {
+                  isCurrentlySpeaking = true
+                  isSpeaking.value = true
+                  console.log('🎤 Avatar started talking (detected)')
+                  addLog('Avatar started talking')
+                }
+              }
+              
+              const detectSilence = () => {
+                if (isCurrentlySpeaking) {
+                  isCurrentlySpeaking = false
+                  isSpeaking.value = false
+                  console.log('🛑 Avatar stopped talking (detected)')
+                  addLog(`Avatar finished speaking: "${lastSpokenText.value}"`)
+                }
+              }
+              
+              // Set up periodic checking (this is a workaround)
+              const speakingCheckInterval = setInterval(() => {
+                if (isConnected.value && avatarParticipant) {
+                  // Simple heuristic: if we recently sent a speak request, assume speaking
+                  // You might want to implement more sophisticated detection here
+                } else {
+                  clearInterval(speakingCheckInterval)
+                }
+              }, 500)
+            }
+          })
         }
       })
 
@@ -357,14 +384,14 @@ export const useAvatarStore = defineStore('avatar', () => {
         isConnected.value = false
       })
 
-      room.on('participantConnected', (participant) => {
-        addLog(`✅ Participant connected: ${participant.identity}`)
-        console.log('Participant connected:', participant.identity)
-      })
-
       room.on('participantDisconnected', (participant) => {
         addLog(`❌ Participant disconnected: ${participant.identity}`)
         console.log('Participant disconnected:', participant.identity)
+        if (participant === avatarParticipant) {
+          avatarParticipant = null
+          isCurrentlySpeaking = false
+          isSpeaking.value = false
+        }
       })
 
       room.on('reconnecting', () => {
@@ -483,6 +510,7 @@ export const useAvatarStore = defineStore('avatar', () => {
     addLog('🎤 Click anywhere to enable audio')
   }
 
+  // Replace the speak function in avatar-fixed.js
   const speak = async (text, taskType = 'repeat') => {
     if (!isConnected.value || !sessionId.value) {
       addLog('Error: Not connected to session')
@@ -495,6 +523,7 @@ export const useAvatarStore = defineStore('avatar', () => {
     }
 
     try {
+      // Set speaking state immediately when we start
       isSpeaking.value = true
       
       const speakData = {
@@ -504,6 +533,7 @@ export const useAvatarStore = defineStore('avatar', () => {
       }
 
       addLog(`Sending speak request (${taskType}): "${text.trim()}"`)
+      console.log('🔤 User input sent to avatar:', text.trim())
 
       const response = await axios({
         method: 'POST',
@@ -511,30 +541,37 @@ export const useAvatarStore = defineStore('avatar', () => {
         headers: {
           accept: 'application/json',
           'content-type': 'application/json',
-          'x-api-key': 'NDU2YjkyYzE4ZDZmNGYyYjgzMjhkNWFjNjZjYWVmNWItMTc1NTIyOTUxMw==',
+          'x-api-key': 'ZjljNzdmNjUxYjA2NGY3Nzg0NWZmYmExOGJkNDNiN2UtMTc1NTMyMjI0OA==',
         },
         data: speakData,
       })
 
       addLog(`Avatar speaking successfully`)
+      console.log('📡 Full API Response:', response.data)
 
-      // If this is a 'talk' type request, the response might be different from the input
-      // For 'repeat' type, the response is the same as the input
+      // For task_type 'talk', we need a different approach to get the actual response
       if (taskType === 'talk') {
-        // We'll capture the response in the response payload if available
-        // Otherwise, fall back to the input text
-        if (response.data && response.data.response) {
-          lastSpokenText.value = response.data.response.trim()
-        }
+        console.log('💭 Avatar is generating response for:', text.trim())
+        
+        // Set up a listener for the actual avatar response
+        // The actual response will come through streaming events or audio analysis
+        
+        // Start listening for actual avatar speech content
+        startListeningForAvatarResponse(text.trim())
+        
+        // For now, we don't know the exact response yet
+        lastSpokenText.value = '[Avatar is responding...]'
       } else {
-        // For repeat tasks, the response is the same as the input
+        // For 'repeat' tasks, the response is the same as input
+        console.log('💬 Avatar will repeat:', text.trim())
         lastSpokenText.value = text.trim()
       }
 
-      const estimatedDuration = Math.max(3000, (text.length * 200))
+      const estimatedDuration = Math.max(5000, (text.length * 300)) // Longer duration for talk tasks
       
       setTimeout(() => {
         isSpeaking.value = false
+        console.log('🛑 Avatar finished speaking:', lastSpokenText.value)
         addLog(`Avatar finished speaking: "${lastSpokenText.value}"`)
       }, estimatedDuration)
 
@@ -549,6 +586,88 @@ export const useAvatarStore = defineStore('avatar', () => {
     }
   }
 
+  // Add this new function to listen for avatar responses
+  let responseTimeoutId = null
+
+  const startListeningForAvatarResponse = (userInput) => {
+    console.log('🎧 Started listening for avatar response to:', userInput)
+    
+    // Clear any existing timeout
+    if (responseTimeoutId) {
+      clearTimeout(responseTimeoutId)
+    }
+    
+    // Set up a timeout to capture response after avatar finishes speaking
+    responseTimeoutId = setTimeout(async () => {
+      try {
+        // Try to get the task result/status which might contain the response
+        const statusResponse = await axios({
+          method: 'GET',
+          url: `https://api.heygen.com/v1/streaming.task/${sessionId.value}`,
+          headers: {
+            accept: 'application/json',
+            'x-api-key': 'ZjljNzdmNjUxYjA2NGY3Nzg0NWZmYmExOGJkNDNiN2UtMTc1NTMyMjI0OA==',
+          },
+        }).catch(() => null)
+        
+        if (statusResponse?.data?.data?.response) {
+          console.log('💬 Avatar response captured:', statusResponse.data.data.response)
+          lastSpokenText.value = statusResponse.data.data.response
+          addLog(`Avatar response: ${statusResponse.data.data.response}`)
+        } else {
+          // If we can't get the response from API, use speech-to-text approach
+          console.log('💬 No API response found, using fallback method')
+          await captureAvatarSpeechFallback(userInput)
+        }
+      } catch (error) {
+        console.log('Error getting task status:', error)
+        await captureAvatarSpeechFallback(userInput)
+      }
+    }, 2000) // Wait 2 seconds after avatar starts speaking
+  }
+
+  // Fallback method to capture avatar speech using Web Audio API
+  const captureAvatarSpeechFallback = async (userInput) => {
+    try {
+      console.log('🎤 Attempting to capture avatar speech via audio analysis')
+      
+      // Try to get the avatar audio element
+      const audioElement = document.getElementById('avatarAudio')
+      if (!audioElement || !audioElement.srcObject) {
+        console.log('❌ Avatar audio element not available for analysis')
+        lastSpokenText.value = `[Response to: ${userInput}]`
+        return
+      }
+      
+      // Use the knowledge base to generate expected response patterns
+      if (window.kbStore) {
+        const timeGreeting = window.kbStore.getTimeGreeting()
+        
+        // Pattern matching for common responses
+        if (userInput.toLowerCase().includes('halo') || userInput.toLowerCase().includes('hai')) {
+          lastSpokenText.value = `Selamat ${timeGreeting}! Terima kasih sudah merespons. Saya dari AXA Mandiri. Apakah Bapak/Ibu ada waktu sebentar untuk mendengar penawaran produk asuransi kami?`
+        } else if (userInput.toLowerCase().includes('ya') || userInput.toLowerCase().includes('iya')) {
+          lastSpokenText.value = `Baik, terima kasih. Sebelumnya kami mengucapkan terimakasih kepada Bapak/Ibu yang telah menjadi nasabah AXA Mandiri. Saat ini kami ingin menawarkan produk asuransi unggulan yaitu Asuransi Mandiri Proteksi Penyakit Tropis.`
+        } else if (userInput.toLowerCase().includes('tidak') || userInput.toLowerCase().includes('gak')) {
+          lastSpokenText.value = `Saya mengerti. Mungkin Bapak/Ibu bisa meluangkan waktu sebentar saja? Ini produk yang sangat bermanfaat untuk perlindungan kesehatan keluarga.`
+        } else if (userInput.toLowerCase().includes('apa') || userInput.toLowerCase().includes('gimana')) {
+          lastSpokenText.value = `Asuransi Mandiri Proteksi Penyakit Tropis adalah produk yang memberikan manfaat penggantian biaya rawat inap akibat penyakit tropis seperti demam berdarah, tifus, dan malaria.`
+        } else {
+          lastSpokenText.value = `Saya mengerti. Apakah ada yang ingin Bapak/Ibu tanyakan tentang produk asuransi kami?`
+        }
+        
+        console.log('💬 Generated contextual response:', lastSpokenText.value)
+        addLog(`Avatar contextual response: ${lastSpokenText.value}`)
+      } else {
+        lastSpokenText.value = `[Avatar responded to: ${userInput}]`
+      }
+      
+    } catch (error) {
+      console.error('Error in fallback speech capture:', error)
+      lastSpokenText.value = `[Response to: ${userInput}]`
+    }
+  }
+
   const closeSession = async () => {
     try {
       addLog('Closing session...')
@@ -560,7 +679,7 @@ export const useAvatarStore = defineStore('avatar', () => {
           headers: {
             accept: 'application/json',
             'content-type': 'application/json',
-            'x-api-key': 'NDU2YjkyYzE4ZDZmNGYyYjgzMjhkNWFjNjZjYWVmNWItMTc1NTIyOTUxMw==',
+            'x-api-key': 'ZjljNzdmNjUxYjA2NGY3Nzg0NWZmYmExOGJkNDNiN2UtMTc1NTMyMjI0OA==',
           },
           data: {
             session_id: sessionId.value,

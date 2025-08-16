@@ -65,7 +65,7 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', {
           headers: {
             accept: 'application/json',
             'content-type': 'application/json',
-            'x-api-key': 'NDU2YjkyYzE4ZDZmNGYyYjgzMjhkNWFjNjZjYWVmNWItMTc1NTIyOTUxMw==',
+            'x-api-key': 'ZjljNzdmNjUxYjA2NGY3Nzg0NWZmYmExOGJkNDNiN2UtMTc1NTMyMjI0OA==',
           },
           data: knowledgeBaseData,
         })
@@ -91,7 +91,7 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', {
           url: 'https://api.heygen.com/v1/streaming/knowledge_base/list',
           headers: {
             accept: 'application/json',
-            'x-api-key': 'NDU2YjkyYzE4ZDZmNGYyYjgzMjhkNWFjNjZjYWVmNWItMTc1NTIyOTUxMw==',
+            'x-api-key': 'ZjljNzdmNjUxYjA2NGY3Nzg0NWZmYmExOGJkNDNiN2UtMTc1NTMyMjI0OA==',
           },
         })
 
@@ -114,7 +114,7 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', {
           url: `https://api.heygen.com/v1/streaming/knowledge_base/${knowledgeBaseId}/delete`,
           headers: {
             accept: 'application/json',
-            'x-api-key': 'NDU2YjkyYzE4ZDZmNGYyYjgzMjhkNWFjNjZjYWVmNWItMTc1NTIyOTUxMw==',
+            'x-api-key': 'ZjljNzdmNjUxYjA2NGY3Nzg0NWZmYmExOGJkNDNiN2UtMTc1NTMyMjI0OA==',
           },
         })
 
@@ -150,7 +150,7 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', {
           headers: {
             accept: 'application/json',
             'content-type': 'application/json',
-            'x-api-key': 'NDU2YjkyYzE4ZDZmNGYyYjgzMjhkNWFjNjZjYWVmNWItMTc1NTIyOTUxMw==',
+            'x-api-key': 'ZjljNzdmNjUxYjA2NGY3Nzg0NWZmYmExOGJkNDNiN2UtMTc1NTMyMjI0OA==',
           },
           data: updateData,
         })
@@ -229,15 +229,11 @@ FLOW PERCAKAPAN DETAIL:
    - Jika ya: "Boleh saya minta nama lengkap dan tanggal lahir pasangan/anak?"
    - Jika tidak: lanjut ke step C
    
-   Step C - Mendata Ahli Waris:
-   - "Untuk ahli waris, siapa yang ingin Bapak/Ibu jadikan sebagai ahli waris?"
-   - "Boleh saya minta nama lengkap dan hubungan keluarga dengan Bapak/Ibu?"
-   
-   Step D - Mendata Email:
+   Step C - Mendata Email:
    - "Untuk pengiriman e-policy dan iktisar policy, boleh saya minta alamat email Bapak/Ibu?"
    - Konfirmasi ejaan email
    
-   Step E - Mendata Alamat:
+   Step D - Mendata Alamat:
    - "Terakhir, boleh saya konfirmasi alamat lengkap Bapak/Ibu untuk pengiriman dokumen?"
    - Minta alamat lengkap dengan kode pos
 
