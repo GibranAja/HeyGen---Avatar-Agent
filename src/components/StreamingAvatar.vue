@@ -95,8 +95,8 @@ const videoRef = ref(null)
 
 // Default values
 const DEFAULT_AVATAR_ID = 'Thaddeus_ProfessionalLook2_public'
-const DEFAULT_VOICE_ID = 'b9d8767fcb1646be972ffc2de07c5229'
-const DEFAULT_KB_ID = '5cc714f036074e4f92f10e7dcf1d242e'
+const DEFAULT_VOICE_ID = "8c47d9e75bdc4f1ba81bfbe32d891085"
+const DEFAULT_KB_ID = '69a0db55b4e84eabb04f572a60a1faa4'
 const AUTO_CLOSE_TIMEOUT = 25000
 
 // Reactive refs
@@ -271,13 +271,45 @@ function initializeSpeechRecognition() {
     recognition.value.interimResults = false
     recognition.value.lang = 'id-ID'
     
+    // ADD: Reduce sensitivity settings
+    recognition.value.maxAlternatives = 1
+    recognition.value.serviceURI = null // Use default, but helps with some browsers
+    
     recognition.value.onstart = () => {
       console.log('Speech recognition started')
       isRecording.value = true
     }
     
     recognition.value.onresult = (event) => {
-      const transcript = event.results[0][0].transcript
+      const result = event.results[0]
+      const transcript = result[0].transcript
+      const confidence = result[0].confidence
+      
+      // ADD: Filter by confidence level (0.0 to 1.0)
+      const MIN_CONFIDENCE = 0.7 // Increase this to reduce false positives
+      
+      if (confidence < MIN_CONFIDENCE) {
+        console.log(`Speech ignored - low confidence: ${confidence}`)
+        return
+      }
+      
+      // ADD: Filter out short utterances (likely noise)
+      if (transcript.trim().length < 3) {
+        console.log(`Speech ignored - too short: "${transcript}"`)
+        return
+      }
+      
+      // ADD: Filter out avatar-like responses
+      const avatarKeywords = ['selamat', 'terima kasih', 'axa', 'mandiri', 'asuransi']
+      const isLikelyAvatar = avatarKeywords.some(keyword => 
+        transcript.toLowerCase().includes(keyword)
+      )
+      
+      if (isLikelyAvatar) {
+        console.log(`Speech ignored - likely avatar echo: "${transcript}"`)
+        return
+      }
+      
       transcribedText.value = transcript
       
       // Auto enable audio on voice input

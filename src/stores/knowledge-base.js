@@ -65,7 +65,7 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', {
           headers: {
             accept: 'application/json',
             'content-type': 'application/json',
-            'x-api-key': 'ZjljNzdmNjUxYjA2NGY3Nzg0NWZmYmExOGJkNDNiN2UtMTc1NTMyMjI0OA==',
+            'x-api-key': 'M2M3YTA4NWM0ZGRiNGQ4OGE5ZTE4MDJjNDdlYTgyMGUtMTc1NTcwNTg2OQ==',
           },
           data: knowledgeBaseData,
         })
@@ -91,7 +91,7 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', {
           url: 'https://api.heygen.com/v1/streaming/knowledge_base/list',
           headers: {
             accept: 'application/json',
-            'x-api-key': 'ZjljNzdmNjUxYjA2NGY3Nzg0NWZmYmExOGJkNDNiN2UtMTc1NTMyMjI0OA==',
+            'x-api-key': 'M2M3YTA4NWM0ZGRiNGQ4OGE5ZTE4MDJjNDdlYTgyMGUtMTc1NTcwNTg2OQ==',
           },
         })
 
@@ -114,7 +114,7 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', {
           url: `https://api.heygen.com/v1/streaming/knowledge_base/${knowledgeBaseId}/delete`,
           headers: {
             accept: 'application/json',
-            'x-api-key': 'ZjljNzdmNjUxYjA2NGY3Nzg0NWZmYmExOGJkNDNiN2UtMTc1NTMyMjI0OA==',
+            'x-api-key': 'M2M3YTA4NWM0ZGRiNGQ4OGE5ZTE4MDJjNDdlYTgyMGUtMTc1NTcwNTg2OQ==',
           },
         })
 
@@ -150,7 +150,7 @@ export const useKnowledgeBaseStore = defineStore('knowledgeBase', {
           headers: {
             accept: 'application/json',
             'content-type': 'application/json',
-            'x-api-key': 'ZjljNzdmNjUxYjA2NGY3Nzg0NWZmYmExOGJkNDNiN2UtMTc1NTMyMjI0OA==',
+            'x-api-key': 'M2M3YTA4NWM0ZGRiNGQ4OGE5ZTE4MDJjNDdlYTgyMGUtMTc1NTcwNTg2OQ==',
           },
           data: updateData,
         })
