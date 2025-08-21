@@ -77,7 +77,7 @@ export const useAvatarStore = defineStore('avatar', () => {
         headers: {
           accept: 'application/json',
           'content-type': 'application/json',
-          'x-api-key': 'M2M3YTA4NWM0ZGRiNGQ4OGE5ZTE4MDJjNDdlYTgyMGUtMTc1NTcwNTg2OQ==',
+          'x-api-key': 'MDk3YmIwN2IwMDRmNDY5OThkZDI3MjkwNGMxZThhYWEtMTc1NTc0MzI1OQ==',
         },
         data: sessionConfig,
       })
@@ -155,7 +155,7 @@ export const useAvatarStore = defineStore('avatar', () => {
         headers: {
           accept: 'application/json',
           'content-type': 'application/json',
-          'x-api-key': 'M2M3YTA4NWM0ZGRiNGQ4OGE5ZTE4MDJjNDdlYTgyMGUtMTc1NTcwNTg2OQ==',
+          'x-api-key': 'MDk3YmIwN2IwMDRmNDY5OThkZDI3MjkwNGMxZThhYWEtMTc1NTc0MzI1OQ==',
         },
         data: {
           session_id: sessionId.value,
@@ -541,7 +541,7 @@ export const useAvatarStore = defineStore('avatar', () => {
         headers: {
           accept: 'application/json',
           'content-type': 'application/json',
-          'x-api-key': 'M2M3YTA4NWM0ZGRiNGQ4OGE5ZTE4MDJjNDdlYTgyMGUtMTc1NTcwNTg2OQ==',
+          'x-api-key': 'MDk3YmIwN2IwMDRmNDY5OThkZDI3MjkwNGMxZThhYWEtMTc1NTc0MzI1OQ==',
         },
         data: speakData,
       })
@@ -606,7 +606,7 @@ export const useAvatarStore = defineStore('avatar', () => {
           url: `https://api.heygen.com/v1/streaming.task/${sessionId.value}`,
           headers: {
             accept: 'application/json',
-            'x-api-key': 'M2M3YTA4NWM0ZGRiNGQ4OGE5ZTE4MDJjNDdlYTgyMGUtMTc1NTcwNTg2OQ==',
+            'x-api-key': 'MDk3YmIwN2IwMDRmNDY5OThkZDI3MjkwNGMxZThhYWEtMTc1NTc0MzI1OQ==',
           },
         }).catch(() => null)
         
@@ -679,7 +679,7 @@ export const useAvatarStore = defineStore('avatar', () => {
           headers: {
             accept: 'application/json',
             'content-type': 'application/json',
-            'x-api-key': 'M2M3YTA4NWM0ZGRiNGQ4OGE5ZTE4MDJjNDdlYTgyMGUtMTc1NTcwNTg2OQ==',
+            'x-api-key': 'MDk3YmIwN2IwMDRmNDY5OThkZDI3MjkwNGMxZThhYWEtMTc1NTc0MzI1OQ==',
           },
           data: {
             session_id: sessionId.value,
